@@ -1,0 +1,102 @@
+// tests/embedded_probe.nv — the package's device claim, as a program
+// that either builds for a Cortex-M or does not.
+//
+// The shard audit's `core-embedded` row copies this and the modules its
+// `use` lines reach into a package of its own and runs
+//
+//   novo build --target=nrf52-qemu src/probe.nv
+//
+// which produces a real Cortex-M4 ELF or fails.  For this package the
+// claim is the entire reason it exists beside the standard library:
+// `bytes.to_base64` is an extern over a host C symbol, and a device
+// that called it would fail at the linker.  If this probe stopped
+// building, the package would have nothing left to offer that
+// `std.codec` does not.
+//
+// It BUILDS; it does not run.  Every function it calls is a `todo()`
+// today, so a device that executed this would panic on the first line
+// of `main`.  What is being checked is the tier: `--target=nrf52-qemu`
+// stamps `@tier(embedded)` on every function it compiles, so the
+// checker walks the module and refuses a `Str` concatenation, a `Bytes`
+// call or an unbounded `while` wherever the implementation later puts
+// one.
+//
+// `base64` IS NOT USED HERE, and that is the split rather than a
+// convenience: that module speaks `Bytes` and `Str`, the embedded
+// runtime defines neither, and one host-only function anywhere in a
+// compilation unit is an undefined symbol at embedded link time whether
+// or not the firmware calls it.
+
+use base64_core
+
+// Three bytes the way firmware would hold them.
+//
+// The array is a FIELD of a `@value` struct rather than a return type,
+// because `[u8; 3]` is a true inline array only inside one — outside,
+// the annotation still means a list, and a list literal is an implicit
+// heap allocation the tier refuses (SPEC § 14.4).
+@value
+struct ProbeGroup
+    b: [u8; 3]
+
+// "Man" — RFC 4648's own worked example, and the one group that
+// encodes to four characters with no padding at all.
+fn probe_group() -> ProbeGroup
+    ProbeGroup { b: [77 as u8, 97 as u8, 110 as u8] }
+
+fn main() [hw]
+    // The constants and the arithmetic, so a device that sizes a
+    // transmit buffer compiles the same numbers the host does.
+    let std_alpha = base64_core.standard()
+    let url_alpha = base64_core.url_safe()
+    let per_group = base64_core.group_bytes()
+    let chars = base64_core.group_chars()
+    let room = base64_core.encoded_len(64, true)
+    let back = base64_core.decoded_len(88, true)
+
+    // The two tables, read directly — what a decoder's inner loop does
+    // before it shifts anything.
+    let sym = base64_core.symbol(std_alpha, 0)
+    let val = base64_core.value(url_alpha, 45)
+
+    // The encoder driven byte at a time, which is the shape a device
+    // streaming a sensor batch out as text has: one byte in, zero or
+    // four characters out, and nothing allocated to pass either.
+    //
+    // Each step is bound with its type written out because a call into
+    // another module does not have its return type inferred in a
+    // single-file build.  Inside a package built as one unit — which is
+    // what every host suite does — none of these annotations is needed.
+    let src = probe_group()
+    var e: B64Enc = base64_core.encoder(std_alpha)
+    for i in 0..3
+        let step: B64Emit = base64_core.push(e, src.b[i])
+        e = step.enc
+        for k in 0..step.len
+            // A real transport would put this character in a queue;
+            // here the read is what forces the array access to be
+            // compiled.
+            let c: u8 = step.out[k]
+            hal.uart.write(".")
+
+    // And the close, which is where padding comes from.
+    let last: B64Emit = base64_core.finish(e, true)
+    for k in 0..last.len
+        let c: u8 = last.out[k]
+        hal.uart.write("=")
+
+    // The decoder's mirror, so both directions are compiled for the
+    // device rather than only the one a sender needs.
+    var d: B64Dec = base64_core.decoder(std_alpha)
+    for i in 0..3
+        let got: B64Drain = base64_core.feed(d, 84 as u8)
+        d = got.dec
+        for k in 0..got.len
+            let b: u8 = got.out[k]
+            hal.uart.write("-")
+
+    let done: B64Drain = base64_core.close(d)
+    if done.ok
+        hal.uart.write("!")
+
+    hal.uart.write("base64-nv: three bytes, four characters\n")

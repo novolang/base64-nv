@@ -1,0 +1,236 @@
+// base64 — RFC 4648 over bytes and text the caller already holds.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// WHAT IT IS.  `base64_core` is the state machine — three integers, no
+// buffer, no allocation.  This module is that machine with a `Bytes`
+// source and a `Str` destination attached, so a caller who already has
+// the whole payload does not write the group loop.  Everything here is
+// arithmetic over bytes the caller holds; nothing is read and nothing
+// is written, which is why the layer is `core` and no function declares
+// an effect.
+//
+// HOW IT DIFFERS FROM `std.codec`.  The standard library's `Base64`
+// codec calls `bytes.to_base64`, which is an extern over a host C
+// symbol: it is the right thing to reach for on a host, it has no
+// URL-safe alphabet, no unpadded form, no size arithmetic and no way to
+// encode a stream a chunk at a time, and it does not link on a device.
+// The README has the table of which to use when.
+//
+// WHY THE SIZES COME FIRST.  A caller that wants `encode_into` has to
+// size the destination before it can make one, so `encoded_len` and
+// `decoded_len` are part of the interface rather than a convenience on
+// top of it.  That is what "encode into a caller's buffer" means in
+// practice.
+//
+// The two modules share no `use` line: a type declared in one is
+// visible in the other by name, and an import nothing calls is an
+// import the file never uses.
+
+// Which of RFC 4648's two tables a document uses.
+//
+// The two differ in two characters out of sixty-four, and a document
+// decoded with the wrong one does not fail — it produces different
+// bytes — so the alphabet is an argument with no default on every call
+// that could care.
+pub enum B64Alphabet
+    // `A`–`Z`, `a`–`z`, `0`–`9`, `+`, `/` (RFC 4648 § 4).  What `base64`
+    // means when nobody says otherwise.
+    B64Standard
+    // `A`–`Z`, `a`–`z`, `0`–`9`, `-`, `_` (RFC 4648 § 5).  JWTs, WebPush
+    // keys, and anything that has to survive a URL or a filename.
+    B64UrlSafe
+
+// Whether a document ends with `=` characters up to a multiple of four.
+//
+// Padding carries no information — the length already says how many
+// bytes the last group held — so it exists to let a decoder that
+// concatenates documents find the boundaries.  A caller decoding one
+// document does not need it, which is why the URL-safe world mostly
+// dropped it.
+pub enum B64Padding
+    // `=` up to a multiple of four.  RFC 4648 § 3.2 requires this
+    // unless the specification using base64 says otherwise.
+    B64Padded
+    // No `=` at all.  What JWT (RFC 7515 § 2) and most URL-safe uses
+    // specify.
+    B64Unpadded
+
+// What went wrong decoding, or sizing a buffer to encode into.
+//
+// The names are prefixed because a variant is constructed by name
+// across the whole assembly, and `BadLength` is the name every codec
+// wants.
+pub enum B64Error
+    // A character that is in neither the alphabet nor the padding.
+    //
+    // `at` is the character offset and `ch` is the byte, so a caller
+    // can print the document with a caret under the problem.  Newlines
+    // are included: RFC 4648 § 3.3 says a decoder rejects characters
+    // outside the alphabet unless the specification using it says
+    // otherwise, and a caller decoding MIME strips the line breaks
+    // first.
+    B64BadCharacter(at: Int, ch: Int)
+    // A length no encoding can produce: not a multiple of four when
+    // padded, or a remainder of one either way.  One leftover character
+    // would carry six bits of a byte that has eight.
+    B64BadLength(len: Int)
+    // `=` somewhere other than at the end, or more than two of them.
+    B64BadPadding(at: Int)
+    // A final quantum whose unused low bits are not zero.
+    //
+    // RFC 4648 § 3.5 calls this non-canonical, and it matters rather
+    // than being pedantry: `QQ` and `QR` both decode to the single byte
+    // `A`, so a system that treats a base64 string as an identity — a
+    // signature, a cache key, a token — has two spellings of the same
+    // value unless the decoder refuses one.
+    B64NonCanonicalTail(at: Int, ch: Int)
+    // The destination handed to `encode_into` or `decode_into` was
+    // shorter than the answer.  `need` is what `encoded_len` or
+    // `decoded_len` would have said.
+    B64BufferTooSmall(need: Int, have: Int)
+
+// The standard `Error` implementation, so a bad document can be
+// reported by anything that reports errors.
+impl Error for B64Error
+    // Answer the one-line report: what was wrong, and at what character
+    // offset.  The offset is in the text rather than left for the
+    // caller to add, because a base64 document has no other landmark.
+    fn message(self) -> Str
+        todo("base64.B64Error.message")
+
+// The alphabet as the integer `base64_core` stores.
+//
+// The bridge between the two halves: the enum is what a host caller
+// reads, and the integer is what survives `@value` on a device.  A
+// program that sets a stream up on the host and encodes it on a device
+// needs exactly this one function.
+//
+// ```novo
+// use base64
+//
+// fn main() [io]
+//     println("${base64.alphabet_code(B64Standard)}")   // 0
+// ```
+pub fn alphabet_code(a: B64Alphabet) -> Int
+    todo("base64.alphabet_code")
+
+// How many characters `n` bytes encode to.
+//
+// What a caller sizing the destination for `encode_into` asks first.
+//
+// ```novo
+// use base64
+//
+// fn main() [io]
+//     // "Man" is three bytes and four characters, padded or not.
+//     println("${base64.encoded_len(3, B64Padded)} ${base64.encoded_len(1, B64Unpadded)}")
+//     // 4 2
+// ```
+pub fn encoded_len(n: Int, pad: B64Padding) -> Int
+    todo("base64.encoded_len")
+
+// How many bytes `s` decodes to, without decoding it.
+//
+// Reads the length and the trailing `=` characters and nothing else, so
+// it is `B64BadLength` for a length no encoding can produce and `Ok`
+// for a document full of characters that turn out to be invalid.  A
+// caller sizing a destination wants the number; a caller validating
+// wants `decode`.
+//
+// ```novo
+// use base64
+//
+// fn main() [io]
+//     match base64.decoded_len("TWFu")
+//         Ok(n)  => println("${n}")   // 3
+//         Err(e) => println(e.message())
+// ```
+pub fn decoded_len(s: Str) -> Result<Int, B64Error>
+    todo("base64.decoded_len")
+
+// Encode `src` as text.
+//
+// The call for a caller who wants the string and does not care where
+// the bytes came from.  It cannot fail: every byte sequence has an
+// encoding.
+//
+// ```novo
+// use std.bytes
+// use base64
+//
+// fn main() [io]
+//     println(base64.encode(bytes.from_str("Man"), B64Standard, B64Padded))
+//     // TWFu
+// ```
+pub fn encode(src: Bytes, alphabet: B64Alphabet, pad: B64Padding) -> Str
+    todo("base64.encode")
+
+// Encode `src` into a buffer the caller already owns, and answer the
+// characters written.
+//
+// `B64BufferTooSmall` when the cursor has less room than `encoded_len`
+// says, and nothing is written in that case — a partially encoded
+// buffer is worse than none, because it looks like a document.
+//
+// This is the call the package exists for: a program that encodes on a
+// schedule allocates the destination once and reuses it, and the
+// arithmetic that sizes it is `encoded_len`.
+pub fn encode_into(src: Bytes, alphabet: B64Alphabet, pad: B64Padding,
+                   mut dst: Cursor) -> Result<Int, B64Error>
+    todo("base64.encode_into")
+
+// Decode `s` back to bytes.
+//
+// Padding is accepted or rejected by the document rather than by an
+// argument: a string that ends in `=` is padded and one that does not
+// is not, and both are read.  What is NOT accepted is `=` in the middle
+// (`B64BadPadding`), a character outside the alphabet
+// (`B64BadCharacter`), a length no encoding produces (`B64BadLength`),
+// or a final quantum with its unused bits set
+// (`B64NonCanonicalTail`).
+//
+// ```novo
+// use std.bytes
+// use base64
+//
+// fn main() [io]
+//     match base64.decode("TWFu", B64Standard)
+//         Ok(b)  => println(bytes.to_hex(b))   // 4d616e
+//         Err(e) => println(e.message())
+// ```
+pub fn decode(s: Str, alphabet: B64Alphabet) -> Result<Bytes, B64Error>
+    todo("base64.decode")
+
+// Decode `s` into a buffer the caller already owns, and answer the
+// bytes written.
+//
+// The mirror of `encode_into`, and the same rule: `B64BufferTooSmall`
+// when the cursor has less room than `decoded_len` says, and nothing
+// written in that case.
+pub fn decode_into(s: Str, alphabet: B64Alphabet, mut dst: Cursor) -> Result<Int, B64Error>
+    todo("base64.decode_into")
+
+// ── Streaming, for a payload that is larger than memory ─────────────
+
+// An encoder over `alphabet`, as `base64_core` holds it.
+//
+// The handoff to the device half, and the answer for a caller encoding
+// a stream: feed bytes with `base64_core.push`, write the four
+// characters each completed group produces, and `base64_core.finish`
+// when the stream ends.  Nothing is buffered, so the payload never has
+// to fit anywhere.
+//
+// A chunked caller on the host does the same thing one `Bytes` at a
+// time; the encoder is the value it carries between chunks.
+pub fn encoder(alphabet: B64Alphabet) -> B64Enc
+    todo("base64.encoder")
+
+// A decoder over `alphabet`, as `base64_core` holds it.
+//
+// The mirror of `encoder`, and the same shape: feed characters, take
+// the three bytes each completed group produces, and
+// `base64_core.close` at the end.
+pub fn decoder(alphabet: B64Alphabet) -> B64Dec
+    todo("base64.decoder")

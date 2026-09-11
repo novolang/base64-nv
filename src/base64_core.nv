@@ -1,0 +1,233 @@
+// base64_core — RFC 4648 as a state machine that allocates nothing,
+// holds no buffer, and builds for a microcontroller.
+//
+// Every body is a `todo()`.  The signatures are the design, and the
+// compiler checks them as claims; see the README for the stamp.
+//
+// WHY THERE IS A SECOND MODULE.  `base64` speaks `Bytes` and `Str`, and
+// neither links at the embedded tier: the embedded runtime defines no
+// `novo_bytes_*` symbol, so a device that called one would fail at the
+// linker rather than at the type checker.  One host-only function
+// anywhere in a compilation unit is an undefined symbol on a device
+// whether or not the firmware calls it, so the half a device uses is
+// its own module and takes and returns integers.
+//
+// THE STATE IS TWO INTEGERS AND AN ALPHABET.  `hold` is the bits of the
+// current twenty-four-bit group that have arrived, `count` is how many
+// bytes of the three are in, and `alphabet` chooses between the two
+// tables RFC 4648 defines.  Three bytes in, four characters out; a
+// group that ends short is what padding is for.
+//
+// WHY THE ALPHABET IS AN INTEGER.  A `@value` struct holds integers,
+// and a fieldless enum is still a tagged value.  `base64` carries the
+// enum a host caller reads and converts once at the boundary, which is
+// the same arrangement `bitstream-nv` uses for its bit order.
+
+// The standard alphabet's code: `A`–`Z`, `a`–`z`, `0`–`9`, `+`, `/`
+// (RFC 4648 § 4).
+//
+// ```novo
+// use base64_core
+//
+// fn main() [io]
+//     println("${base64_core.standard()}")   // 0
+// ```
+pub fn standard() -> Int
+    todo("base64_core.standard")
+
+// The URL- and filename-safe alphabet's code: the same sixty-two
+// alphanumerics, then `-` and `_` (RFC 4648 § 5).
+//
+// The two differ in two characters out of sixty-four, and those two are
+// exactly the ones that need escaping in a URL query, in a path segment
+// and in a filename.  A JWT, a WebPush key and a Git object name are
+// all this alphabet.
+pub fn url_safe() -> Int
+    todo("base64_core.url_safe")
+
+// The bytes in one group: 3.
+pub fn group_bytes() -> Int
+    todo("base64_core.group_bytes")
+
+// The characters one group encodes to: 4.
+//
+// Four characters for three bytes is where the 4/3 expansion comes
+// from, and it is why a caller sizing a buffer multiplies rather than
+// guesses.
+pub fn group_chars() -> Int
+    todo("base64_core.group_chars")
+
+// How many characters `n` bytes encode to.
+//
+// Padded, that is `4 * ceil(n / 3)`; unpadded, it is
+// `4 * (n / 3) + extra`, where `extra` is 0, 2 or 3 for a remainder of
+// 0, 1 or 2 bytes.  Never 1: one leftover character would carry six
+// bits of a byte that has eight, and RFC 4648 § 3.5 has no such
+// quantum.
+//
+// ```novo
+// use base64_core
+//
+// fn main() [io]
+//     println("${base64_core.encoded_len(1, true)} ${base64_core.encoded_len(1, false)}")
+//     // 4 2
+// ```
+pub fn encoded_len(n: Int, padded: Bool) -> Int
+    todo("base64_core.encoded_len")
+
+// How many bytes `chars` characters decode to, padding characters
+// included in the count when `padded` is true.
+//
+// Answers a negative number for a length no encoding can produce — a
+// padded length that is not a multiple of four, or an unpadded length
+// whose remainder is one.  A negative rather than a `Result` for the
+// reason the whole module is shaped this way: a `@value` module has
+// nowhere to put an allocation, and `base64` answers the `Result` a
+// host caller wants.
+pub fn decoded_len(chars: Int, padded: Bool) -> Int
+    todo("base64_core.decoded_len")
+
+// The character a six-bit value encodes to, as its ASCII byte.
+//
+// `v` is `0 ..= 63`; anything else answers 0, which is not a character
+// in either alphabet and so cannot be mistaken for one.
+pub fn symbol(alphabet: Int, v: Int) -> Int
+    todo("base64_core.symbol")
+
+// The six-bit value a character decodes to, or -1 for a character
+// outside the alphabet.
+//
+// `=` is outside the alphabet here and is handled by `close` rather
+// than by this function: padding is a property of the group, not of the
+// character, and a decoder that took `=` as a value would accept it in
+// the middle of a document.
+//
+// ```novo
+// use base64_core
+//
+// fn main() [io]
+//     println("${base64_core.value(base64_core.standard(), 65)}")   // 0, which is `A`
+// ```
+pub fn value(alphabet: Int, ch: Int) -> Int
+    todo("base64_core.value")
+
+// An encoder between two bytes: the partial group it has open, and
+// nothing else.
+//
+// A `@value` struct, so it lives in the caller's stack frame with no
+// header, no reference count and no allocation.  A device streaming a
+// sensor batch out as text owns twenty-four bytes of its own frame.
+//
+// `count` is `0 ..= 2`: a third byte completes the group and is emitted
+// at once, so the encoder never holds three.
+pub @value
+struct B64Enc
+    alphabet: Int
+    hold: Int
+    count: Int
+
+// What one encode step produced: the encoder after it, and the
+// characters to write.
+//
+// `out` is a fixed four-byte inline array because four is the most any
+// step can produce — a completed group — and a list would be a heap
+// allocation in an interrupt handler.  `len` is 0 or 4 from `push`, and
+// `0 ..= 4` from `finish`.
+pub @value
+struct B64Emit
+    enc: B64Enc
+    out: [u8; 4]
+    len: Int
+
+// A fresh encoder over `alphabet`, with no group open.
+pub fn encoder(alphabet: Int) -> B64Enc
+    todo("base64_core.encoder")
+
+// Feed one byte, and answer the encoder after it with the characters to
+// write.
+//
+// Two bytes in three emit nothing; the third emits all four characters
+// of the group at once.  That is the whole of the format, and it is why
+// the emit buffer is four and not one.
+//
+// ```novo
+// use base64_core
+//
+// fn main() [io]
+//     let e = base64_core.push(base64_core.encoder(base64_core.standard()), 77 as u8)
+//     println("${e.len}")   // 0 — one byte of three
+// ```
+pub fn push(e: B64Enc, b: u8) -> B64Emit
+    todo("base64_core.push")
+
+// Close the message and answer the characters the final partial group
+// needs.
+//
+// A group that consumed nothing emits nothing.  One leftover byte emits
+// two characters, two leftover bytes emit three, and `padded` adds `=`
+// characters up to four.  The unused low bits of the last character are
+// ZERO, which is what RFC 4648 § 3.5 requires of a canonical encoding
+// and what `base64`'s decoder refuses a document for getting wrong.
+//
+// ```novo
+// use base64_core
+//
+// fn main() [io]
+//     let done = base64_core.finish(base64_core.encoder(base64_core.standard()), true)
+//     println("${done.len}")   // 0 — nothing in, nothing out
+// ```
+pub fn finish(e: B64Enc, padded: Bool) -> B64Emit
+    todo("base64_core.finish")
+
+// A decoder between two characters: the partial group it has open.
+//
+// `count` is `0 ..= 3`: a fourth character completes the group and is
+// emitted at once.  `bad` latches when a character outside the alphabet
+// arrives — a `@value` function has nowhere to put a refusal, so the
+// refusal is carried on the value and read off it.
+pub @value
+struct B64Dec
+    alphabet: Int
+    hold: Int
+    count: Int
+    bad: Bool
+
+// What one decode step produced: the decoder after it, the bytes to
+// write, and whether the step was sound.
+//
+// `ok` is false when the character was outside the alphabet, or when
+// `close` was given a group that cannot end — one character left over,
+// or a final quantum whose unused bits are not zero.  `len` is then 0
+// and the decoder comes back with `bad` latched, so a caller that
+// checks only at the end still refuses the document.
+pub @value
+struct B64Drain
+    dec: B64Dec
+    out: [u8; 3]
+    len: Int
+    ok: Bool
+
+// A fresh decoder over `alphabet`, with no group open.
+pub fn decoder(alphabet: Int) -> B64Dec
+    todo("base64_core.decoder")
+
+// Feed one character, and answer the decoder after it with the bytes to
+// write.
+//
+// Three characters in four emit nothing; the fourth emits all three
+// bytes at once.  A `=` is not fed here — it is the absence of a
+// character, and `close` is what reads it — so a caller stripping
+// padding before the loop is doing the right thing.
+pub fn feed(d: B64Dec, ch: u8) -> B64Drain
+    todo("base64_core.feed")
+
+// Close the document and answer the bytes the final partial group
+// carried.
+//
+// Two leftover characters carry one byte, three carry two, and none
+// carries none.  ONE leftover character is not an encoding of anything
+// and answers `ok = false`, as does a final quantum whose unused bits
+// are set — RFC 4648 § 3.5 calls that non-canonical, and accepting it
+// would let two different documents decode to the same bytes.
+pub fn close(d: B64Dec) -> B64Drain
+    todo("base64_core.close")

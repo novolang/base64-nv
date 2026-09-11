@@ -1,0 +1,39 @@
+[package]
+name        = "base64-nv"
+version     = "0.0.1"
+description = "RFC 4648 base64 as a @value state machine: both alphabets, padded and unpadded, encode into a buffer the caller already owns, and decode with a refusal that names the character and the offset.  The standard library's base64 is a host C symbol; this one is arithmetic, and it compiles for a microcontroller.  Interface only — every body is a todo()."
+license     = "Apache-2.0"
+
+# An INTERFACE release: every `pub fn` body is a `todo()`, so the
+# signatures and the effect rows are published and nothing is
+# implemented.  `novo pkg publish` recognises the shape and requires
+# both the draft stability and the 0.0.x version; the first
+# implementation is the 0.1.0 published over it.
+stability   = "draft"
+
+# `core`: a table lookup and three shifts over bytes the caller already
+# holds.  No function declares an effect.
+#
+# It carries `tests/embedded_probe.nv`, so the device claim is BUILT.
+# That claim is the reason the package exists beside `std.codec`:
+# `bytes.to_base64` is an extern over a host C symbol, and a device that
+# called it would fail at the linker.
+layer       = "core"
+
+category    = "encoding"
+
+tags        = ["base64", "base64url", "rfc4648", "encoding", "embedded", "no-alloc", "sans-io"]
+repository  = "https://github.com/novolang/base64-nv"
+maintainers = ["novo-lang"]
+novo        = ">= 0.8.9"
+
+[docs.pages]
+"README.md" = "Six bits at a time, on a device or on a host"
+
+[dependencies]
+# None, and bitstream-nv is the one a reader would expect to see here.
+# base64's group is a FIXED twenty-four bits and its alphabet is a table
+# lookup, so a general variable-width bit reader would be slower and
+# would cost the device claim: the embedded probe builds the package's
+# core modules and nothing they depend on.  The README says so where a
+# reader will look for it.

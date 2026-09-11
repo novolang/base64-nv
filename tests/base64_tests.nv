@@ -1,0 +1,335 @@
+// tests/base64_tests.nv — the API tests, written against the
+// signatures.
+//
+// They COMPILE today and they FAIL at run, with `not implemented:
+// base64.<fn>` from the `todo()` that is each body.  That is the
+// expected state of an interface release: the compiler has checked
+// every signature, every type and every effect row, and nothing else
+// has been checked because there is nothing else yet.
+//
+// EVERY VECTOR IS RFC 4648's.  § 10 is the specification's own test
+// suite — the eight `BASE64("f")` … `BASE64("foobar")` lines — and § 9
+// is the worked "Man" example the encoder table is derived from.  A
+// test that passes here is a document any conforming decoder reads.
+
+use std.test
+use std.bytes
+use base64
+use base64_core
+
+// ── RFC 4648 § 10, the specification's own eight vectors ────────────
+
+@test
+fn test_the_rfc_4648_section_10_vectors_encode()
+    test.assert_eq(base64.encode(bytes.from_str(""), B64Standard, B64Padded), "")
+    test.assert_eq(base64.encode(bytes.from_str("f"), B64Standard, B64Padded), "Zg==")
+    test.assert_eq(base64.encode(bytes.from_str("fo"), B64Standard, B64Padded), "Zm8=")
+    test.assert_eq(base64.encode(bytes.from_str("foo"), B64Standard, B64Padded), "Zm9v")
+    test.assert_eq(base64.encode(bytes.from_str("foob"), B64Standard, B64Padded), "Zm9vYg==")
+    test.assert_eq(base64.encode(bytes.from_str("fooba"), B64Standard, B64Padded), "Zm9vYmE=")
+    test.assert_eq(base64.encode(bytes.from_str("foobar"), B64Standard, B64Padded), "Zm9vYmFy")
+
+@test
+fn test_the_rfc_4648_section_10_vectors_decode()
+    match base64.decode("Zg==", B64Standard)
+        Ok(b)  => test.assert_eq(bytes.to_str(b), "f")
+        Err(e) => test.fail(e.message())
+    match base64.decode("Zm8=", B64Standard)
+        Ok(b)  => test.assert_eq(bytes.to_str(b), "fo")
+        Err(e) => test.fail(e.message())
+    match base64.decode("Zm9vYmFy", B64Standard)
+        Ok(b)  => test.assert_eq(bytes.to_str(b), "foobar")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_the_section_9_worked_example()
+    // RFC 4648 § 9 walks "Man" through the twenty-four-bit group by
+    // hand: 010011 010110 0001 011011 10, which is T W F u.
+    test.assert_eq(base64.encode(bytes.from_str("Man"), B64Standard, B64Padded), "TWFu")
+    match base64.decode("TWFu", B64Standard)
+        Ok(b)  => test.assert_eq(bytes.to_hex(b), "4d616e")
+        Err(e) => test.fail(e.message())
+
+// ── The two alphabets ───────────────────────────────────────────────
+
+@test
+fn test_the_url_safe_alphabet_differs_in_exactly_two_characters()
+    // 0xFB 0xFF sets the bit patterns that reach index 62 and 63, which
+    // is where the two tables part company: `+/` becomes `-_`.
+    let raw = bytes.from_hex("fbff") ?? bytes.zeros(0)
+    test.assert_eq(base64.encode(raw, B64Standard, B64Unpadded), "+/8")
+    test.assert_eq(base64.encode(raw, B64UrlSafe, B64Unpadded), "-_8")
+
+@test
+fn test_a_document_decoded_with_the_wrong_alphabet_is_refused()
+    // Not silently different bytes: `-` is outside the standard
+    // alphabet, so the refusal names the character and the offset.
+    match base64.decode("-_8", B64Standard)
+        Ok(_)  => test.fail("`-` is not in the standard alphabet")
+        Err(e) =>
+            match e
+                B64BadCharacter(at, ch) =>
+                    test.assert_eq(at, 0)
+                    test.assert_eq(ch, 45)
+                _                       => test.fail("expected B64BadCharacter: ${e.message()}")
+
+@test
+fn test_the_alphabet_enum_maps_onto_the_integer_the_device_half_stores()
+    test.assert_eq(base64.alphabet_code(B64Standard), base64_core.standard())
+    test.assert_eq(base64.alphabet_code(B64UrlSafe), base64_core.url_safe())
+
+// ── Padding, present and absent ─────────────────────────────────────
+
+@test
+fn test_the_unpadded_form_is_the_padded_one_without_the_equals()
+    // JWT (RFC 7515 § 2) specifies exactly this: base64url with the
+    // padding removed.
+    test.assert_eq(base64.encode(bytes.from_str("f"), B64UrlSafe, B64Unpadded), "Zg")
+    test.assert_eq(base64.encode(bytes.from_str("fo"), B64UrlSafe, B64Unpadded), "Zm8")
+    test.assert_eq(base64.encode(bytes.from_str("foo"), B64UrlSafe, B64Unpadded), "Zm9v")
+
+@test
+fn test_both_forms_decode_without_being_told_which_they_are()
+    // The length and the trailing `=` say it, so the decoder does not
+    // take a padding argument at all.
+    match base64.decode("Zg==", B64Standard)
+        Ok(b)  => test.assert_eq(bytes.to_str(b), "f")
+        Err(e) => test.fail(e.message())
+    match base64.decode("Zg", B64Standard)
+        Ok(b)  => test.assert_eq(bytes.to_str(b), "f")
+        Err(e) => test.fail(e.message())
+
+@test
+fn test_padding_in_the_middle_is_refused()
+    match base64.decode("Zg==Zg==", B64Standard)
+        Ok(_)  => test.fail("two concatenated documents are not one document")
+        Err(e) =>
+            match e
+                B64BadPadding(at) => test.assert_eq(at, 2)
+                _                 => test.fail("expected B64BadPadding: ${e.message()}")
+
+// ── The lengths no encoding produces ────────────────────────────────
+
+@test
+fn test_a_single_leftover_character_is_not_an_encoding_of_anything()
+    // One character carries six bits and the smallest thing it could
+    // encode has eight, so `Zm9vY` is a truncation rather than a
+    // document.
+    match base64.decode("Zm9vY", B64Standard)
+        Ok(_)  => test.fail("five characters is four plus a fragment")
+        Err(e) =>
+            match e
+                B64BadLength(len) => test.assert_eq(len, 5)
+                _                 => test.fail("expected B64BadLength: ${e.message()}")
+
+@test
+fn test_a_padded_document_whose_length_is_not_a_multiple_of_four_is_refused()
+    match base64.decode("Zm9vYg=", B64Standard)
+        Ok(_)  => test.fail("a padded document is a multiple of four")
+        Err(e) =>
+            match e
+                B64BadLength(len) => test.assert_eq(len, 7)
+                _                 => test.fail("expected B64BadLength: ${e.message()}")
+
+// ── Canonicality, which is what makes base64 an identity ────────────
+
+@test
+fn test_a_final_quantum_with_its_unused_bits_set_is_refused()
+    // RFC 4648 § 3.5.  `Zg==` and `Zh==` both carry the byte `f` in
+    // their first six bits; the second sets bits the encoding never
+    // writes.  Accepting both would give a signature, a cache key or a
+    // token two spellings.
+    match base64.decode("Zh==", B64Standard)
+        Ok(_)  => test.fail("a non-canonical tail decodes to a byte it did not encode")
+        Err(e) =>
+            match e
+                B64NonCanonicalTail(at, ch) =>
+                    test.assert_eq(at, 1)
+                    test.assert_eq(ch, 104)
+                _                           => test.fail("expected B64NonCanonicalTail: ${e.message()}")
+
+@test
+fn test_a_newline_is_a_character_outside_the_alphabet()
+    // RFC 4648 § 3.3: a decoder rejects characters outside the
+    // alphabet unless the specification using it says otherwise.  A
+    // caller decoding MIME strips the line breaks first, and this is
+    // the refusal that tells them so.
+    match base64.decode("Zm9v\nYmFy", B64Standard)
+        Ok(_)  => test.fail("a line break is not base64")
+        Err(e) =>
+            match e
+                B64BadCharacter(at, ch) =>
+                    test.assert_eq(at, 4)
+                    test.assert_eq(ch, 10)
+                _                       => test.fail("expected B64BadCharacter: ${e.message()}")
+
+// ── The size arithmetic a caller allocates with ─────────────────────
+
+@test
+fn test_encoded_len_is_what_a_caller_sizes_a_buffer_with()
+    test.assert_eq(base64.encoded_len(0, B64Padded), 0)
+    test.assert_eq(base64.encoded_len(1, B64Padded), 4)
+    test.assert_eq(base64.encoded_len(2, B64Padded), 4)
+    test.assert_eq(base64.encoded_len(3, B64Padded), 4)
+    test.assert_eq(base64.encoded_len(4, B64Padded), 8)
+    // Unpadded, the remainder costs two characters for one byte and
+    // three for two, and never one.
+    test.assert_eq(base64.encoded_len(1, B64Unpadded), 2)
+    test.assert_eq(base64.encoded_len(2, B64Unpadded), 3)
+    test.assert_eq(base64.encoded_len(3, B64Unpadded), 4)
+
+@test
+fn test_decoded_len_reads_the_length_without_decoding_the_document()
+    match base64.decoded_len("Zm9vYmFy")
+        Ok(n)  => test.assert_eq(n, 6)
+        Err(e) => test.fail(e.message())
+    match base64.decoded_len("Zg==")
+        Ok(n)  => test.assert_eq(n, 1)
+        Err(e) => test.fail(e.message())
+    match base64.decoded_len("Zg")
+        Ok(n)  => test.assert_eq(n, 1)
+        Err(e) => test.fail(e.message())
+    // A length no encoding produces is refused here too, so a caller
+    // sizing a buffer learns before it allocates one.
+    match base64.decoded_len("Zm9vY")
+        Ok(_)  => test.fail("five characters is four plus a fragment")
+        Err(e) =>
+            match e
+                B64BadLength(len) => test.assert_eq(len, 5)
+                _                 => test.fail("expected B64BadLength: ${e.message()}")
+
+// ── Into a buffer the caller already owns ───────────────────────────
+
+@test
+fn test_encode_into_writes_into_the_callers_buffer()
+    var dst = bytes.cursor_le(bytes.zeros(8))
+    match base64.encode_into(bytes.from_str("foo"), B64Standard, B64Padded, dst)
+        Err(e) => test.fail(e.message())
+        Ok(n)  =>
+            test.assert_eq(n, 4)
+            test.assert_eq(bytes.to_str(bytes.slice(dst.finish(), 0, n)), "Zm9v")
+
+@test
+fn test_encode_into_refuses_a_buffer_smaller_than_the_answer()
+    // Nothing is written in that case: a partially encoded buffer is
+    // worse than none, because it looks like a document.
+    var dst = bytes.cursor_le(bytes.zeros(2))
+    match base64.encode_into(bytes.from_str("foo"), B64Standard, B64Padded, dst)
+        Ok(_)  => test.fail("four characters do not fit two bytes")
+        Err(e) =>
+            match e
+                B64BufferTooSmall(need, have) =>
+                    test.assert_eq(need, 4)
+                    test.assert_eq(have, 2)
+                _                             => test.fail("expected B64BufferTooSmall: ${e.message()}")
+
+@test
+fn test_decode_into_writes_into_the_callers_buffer()
+    var dst = bytes.cursor_le(bytes.zeros(8))
+    match base64.decode_into("Zm9vYmFy", B64Standard, dst)
+        Err(e) => test.fail(e.message())
+        Ok(n)  =>
+            test.assert_eq(n, 6)
+            test.assert_eq(bytes.to_str(bytes.slice(dst.finish(), 0, n)), "foobar")
+
+// ── The device half, on its own terms ───────────────────────────────
+
+@test
+fn test_the_core_constants_are_the_group_arithmetic()
+    test.assert_eq(base64_core.group_bytes(), 3)
+    test.assert_eq(base64_core.group_chars(), 4)
+    test.assert_eq(base64_core.encoded_len(1, true), 4)
+    test.assert_eq(base64_core.encoded_len(1, false), 2)
+    test.assert_eq(base64_core.decoded_len(4, true), 3)
+    test.assert_eq(base64_core.decoded_len(2, false), 1)
+    // A length no encoding produces answers a negative number, because
+    // a `@value` module has nowhere to put an allocation.
+    test.assert_true(base64_core.decoded_len(5, false) < 0, "five characters is not a decodable length")
+
+@test
+fn test_the_two_tables_are_readable_directly()
+    let std_alpha = base64_core.standard()
+    let url_alpha = base64_core.url_safe()
+    // `A` is index 0 in both tables, and `/` and `_` are index 63 in
+    // one each.
+    test.assert_eq(base64_core.symbol(std_alpha, 0), 65)
+    test.assert_eq(base64_core.symbol(std_alpha, 63), 47)
+    test.assert_eq(base64_core.symbol(url_alpha, 63), 95)
+    test.assert_eq(base64_core.value(std_alpha, 65), 0)
+    test.assert_eq(base64_core.value(url_alpha, 95), 63)
+    // A character outside the alphabet answers -1 rather than a value
+    // that would decode.
+    test.assert_eq(base64_core.value(std_alpha, 45), 0 - 1)
+
+@test
+fn test_the_core_encoder_emits_a_group_at_a_time()
+    // Two bytes in three emit nothing; the third emits all four
+    // characters at once, which is why the emit buffer is four.
+    let e0 = base64_core.encoder(base64_core.standard())
+    let s1 = base64_core.push(e0, 77 as u8)
+    test.assert_eq(s1.len, 0)
+    let s2 = base64_core.push(s1.enc, 97 as u8)
+    test.assert_eq(s2.len, 0)
+    let s3 = base64_core.push(s2.enc, 110 as u8)
+    test.assert_eq(s3.len, 4)
+    test.assert_eq(s3.out[0] as Int, 84)
+    test.assert_eq(s3.out[3] as Int, 117)
+
+@test
+fn test_the_core_encoder_pads_on_finish()
+    let e0 = base64_core.encoder(base64_core.standard())
+    let s1 = base64_core.push(e0, 102 as u8)
+    // One leftover byte: two characters, and two `=` when padded.
+    let padded = base64_core.finish(s1.enc, true)
+    test.assert_eq(padded.len, 4)
+    test.assert_eq(padded.out[3] as Int, 61)
+    let bare = base64_core.finish(s1.enc, false)
+    test.assert_eq(bare.len, 2)
+    // A group that consumed nothing emits nothing.
+    test.assert_eq(base64_core.finish(e0, true).len, 0)
+
+@test
+fn test_the_core_decoder_drains_a_group_at_a_time()
+    let d0 = base64_core.decoder(base64_core.standard())
+    let a = base64_core.feed(d0, 84 as u8)
+    test.assert_eq(a.len, 0)
+    test.assert_true(a.ok, "`T` is in the standard alphabet")
+    let b = base64_core.feed(a.dec, 87 as u8)
+    let c = base64_core.feed(b.dec, 70 as u8)
+    let d = base64_core.feed(c.dec, 117 as u8)
+    test.assert_eq(d.len, 3)
+    test.assert_eq(d.out[0] as Int, 77)
+    test.assert_eq(d.out[2] as Int, 110)
+    // A whole group leaves nothing to close.
+    test.assert_eq(base64_core.close(d.dec).len, 0)
+
+@test
+fn test_the_core_decoder_latches_a_bad_character()
+    // A `@value` function has nowhere to put a refusal, so the refusal
+    // is carried on the value and a caller that checks only at the end
+    // still refuses the document.
+    let d0 = base64_core.decoder(base64_core.standard())
+    let bad = base64_core.feed(d0, 45 as u8)
+    test.assert_true(not bad.ok, "`-` is not in the standard alphabet")
+    test.assert_eq(bad.len, 0)
+    test.assert_true(bad.dec.bad, "the fault is latched on the decoder")
+    let closed = base64_core.close(bad.dec)
+    test.assert_true(not closed.ok, "a latched fault survives the close")
+
+// ── Streaming, and the handoff between the halves ───────────────────
+
+@test
+fn test_the_host_hands_a_streaming_encoder_to_the_device_half()
+    // A caller encoding a payload larger than memory carries this value
+    // between chunks; a device carries the same value between
+    // interrupts.
+    let e = base64.encoder(B64UrlSafe)
+    test.assert_eq(e.alphabet, base64_core.url_safe())
+    test.assert_eq(e.count, 0)
+
+@test
+fn test_the_host_hands_a_streaming_decoder_to_the_device_half()
+    let d = base64.decoder(B64Standard)
+    test.assert_eq(d.alphabet, base64_core.standard())
+    test.assert_eq(d.count, 0)
+    test.assert_true(not d.bad, "a fresh decoder has seen nothing wrong")

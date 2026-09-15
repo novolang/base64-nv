@@ -1,167 +1,256 @@
 # base64-nv
 
-**Status: NOT IMPLEMENTED — interface only.**
+Base64 writes arbitrary bytes as text, using an alphabet of sixty-four
+characters that survives channels which are not binary-safe. It is
+specified in [RFC 4648](https://www.rfc-editor.org/rfc/rfc4648), which
+also defines a second alphabet for use in URLs and filenames. This
+package brings both alphabets to novo-lang, in a form that also builds
+for a microcontroller.
 
-Every public function below is published with its signature and its
-effect row, and every body is `todo()`.  Installing this package works;
-calling it panics with `not implemented`.
+**Status: NOT IMPLEMENTED — interface only.** Every function is declared
+with its full signature, but every body is a `todo()` that panics when
+called. The package is published so its design can be reviewed and
+depended on before it is implemented. Version 0.1.0 will be the first
+working release.
 
-## What this is
+## What base64 is
 
-RFC 4648 base64, both alphabets, padded and unpadded: encode bytes a
-caller already holds into a buffer the caller already owns, decode text
-back with a refusal that names the character and the offset, and answer
-the two size questions — `encoded_len(n)` and `decoded_len(s)` — so the
-caller can allocate before it encodes rather than after.
+Base64 reads the message three bytes at a time. Those twenty-four bits
+are split into four groups of six bits. Each six-bit group is one
+character of the alphabet, so three bytes become four characters. Three
+bytes at a time is called a **quantum**, and it is the unit the whole
+format is built from.
 
-Two modules.  `base64_core` is the group machine on its own — an
-alphabet code, a bit accumulator and a count in a `@value` struct, no
-buffer and no allocation, three bytes in and four characters out — and
-it compiles for a Cortex-M.  `base64` is that machine with `Bytes` and
-`Str` attached, for a caller who has the whole payload already.
+A message whose length is not a multiple of three ends in a short
+quantum. One leftover byte becomes two characters and two leftover bytes
+become three. The unused low bits of the last character are zero. RFC
+4648 section 3.5 calls an encoding that sets them **non-canonical**,
+because two different documents then decode to the same bytes.
 
-## The standard library already has base64 — when do I use which?
+**Padding** is the `=` character, added to bring the last quantum up to
+four characters. RFC 4648 section 3.2 requires it unless the
+specification using base64 says otherwise. It carries no information:
+the length of the text already says how many bytes the last quantum
+held. JSON Web Tokens and most other URL-safe uses drop it.
 
-`std.codec`'s `Base64` codec calls `bytes.to_base64`, which is an extern
-over a host C symbol.  It is the right thing to reach for most of the
-time.  This package is for the four cases it does not cover.
+The two alphabets differ in two characters out of sixty-four. Section 4
+defines the standard alphabet, which ends `+` and `/`. Section 5 defines
+the URL- and filename-safe alphabet, which ends `-` and `_`. Those two
+characters are exactly the ones that need escaping in a URL query, in a
+path segment and in a filename.
 
-| you want | reach for |
+| Quantity | Value |
 | --- | --- |
-| a `Str` from some `Bytes` on a host, standard alphabet, padded | `std.codec` — it is one call and it is already linked |
-| the **URL-safe** alphabet: a JWT, a WebPush key, a filename | this |
-| the **unpadded** form, which is what JWT specifies | this |
-| to encode **into a buffer you own**, allocating nothing per call | this |
-| to encode or decode a **stream** a chunk at a time | this |
-| to run **on a device** | this — `bytes.to_base64` does not link there |
-| a refusal that **names the bad character and its offset** | this |
-| a refusal for a **non-canonical tail** (RFC 4648 § 3.5) | this |
+| Bytes in one quantum | 3 |
+| Characters one quantum encodes to | 4 |
+| Bits one character carries | 6 |
+| Characters in an alphabet | 64 |
+| Characters the two alphabets differ in | 2 |
+| Characters `n` bytes encode to, padded | `4 * ceil(n / 3)` |
+| Characters `n` bytes encode to, unpadded | `4 * (n / 3)`, plus 0, 2 or 3 |
+| Padding character | `=` |
+| Longest run of padding on a document | 2 |
 
-The last two are worth a sentence each.  A decoder that answers
-"invalid" and nothing else leaves a caller printing the whole document
-to a log to find out what happened; `B64BadCharacter(at, ch)` lets them
-print a caret instead.  And a decoder that accepts `Zh==` as well as
-`Zg==` has given a signature, a cache key or a token two spellings —
-which is why RFC 4648 § 3.5 says the unused bits of a final quantum are
-zero, and why this decoder refuses a document that sets them.
+## Install
 
-## Adding it, and checking it
-
-```bash
-novo pkg add base64-nv        # into your novo.toml
-novo pkg build                # type- and effect-check the package
-novo test --isolate tests/base64_tests.nv
+```
+novo pkg add base64-nv
 ```
 
-`novo test` is red today and that is the point of the release: every
-assertion fails with `not implemented: base64.<fn>`.  They turn green
-one at a time as bodies land.
-
-## The one example that will work
+## Example
 
 ```novo
 use std.bytes
 use base64
 
 fn main() [io]
+    // Encode three bytes with the standard alphabet, padded.
+    // RFC 4648 section 9 walks this example through by hand.
     println(base64.encode(bytes.from_str("Man"), B64Standard, B64Padded))
-    // TWFu — RFC 4648 § 9's own worked example
 
+    // Decode the same text back. The alphabet is given; the padding is
+    // read off the document.
     match base64.decode("TWFu", B64Standard)
-        Ok(b)  => println(bytes.to_hex(b))   // 4d616e
+        // The three bytes, as hexadecimal.
+        Ok(b)  => println(bytes.to_hex(b))
+        // The character that was wrong, and where it was.
         Err(e) => println(e.message())
 ```
 
-## The load-bearing interface
+Build and test with `novo pkg build` and `novo test`. Today `novo test`
+fails on purpose: every test reaches a `not implemented: base64.<fn>`
+panic. The tests are the specification the implementation will have to
+satisfy.
 
-`B64Enc` and its three fields, in `base64_core`:
+## What the package contains
 
-```novo
-pub @value
-struct B64Enc
-    alphabet: Int
-    hold: Int
-    count: Int
+| Module | Contents |
+| --- | --- |
+| `base64_core` | The quantum machine: an alphabet code, a bit accumulator and a count, with the two alphabet tables, the size arithmetic, and one step in each direction. It holds no buffer and allocates nothing. |
+| `base64` | The same machine over a whole payload: `Bytes` in and `Str` out, the two enums a host caller reads, the five named refusals, and the calls that write into a buffer the caller owns. |
+
+## How to choose an entry point
+
+**`base64.encode` and `base64.decode` take the whole payload.** Each
+allocates the result and hands it back. This is the call for a program
+that already holds the bytes and wants the text.
+
+**`base64.encode_into` and `base64.decode_into` write into a `Cursor`
+you already own.** Size the destination with `base64.encoded_len` or
+`base64.decoded_len` first. This is the call for a program that encodes
+on a schedule and wants to allocate once.
+
+**`base64.encoder` and `base64.decoder` hand back the raw state.** Feed
+it with `base64_core.push` or `base64_core.feed`, and end it with
+`base64_core.finish` or `base64_core.close`. This is the call for a
+payload larger than memory, and the handoff to a device.
+
+**`base64_core` on its own is the whole format for firmware.** It takes
+and answers integers, so it links on a device. See "Running on a
+microcontroller".
+
+## The rules a user needs
+
+1. **The alphabet is an argument on every call that could care.** A
+   document decoded with the wrong alphabet does not fail quietly. It
+   produces different bytes, or a refusal naming a character that is in
+   the other table. RFC 4648 sections 4 and 5 define the two.
+2. **Encoding takes the padding as an argument, and decoding does not.**
+   The length of the text and its trailing `=` characters already say
+   which form a document is in. RFC 4648 section 3.2 is the rule.
+3. **A final quantum whose unused bits are set is refused.** That is
+   `B64NonCanonicalTail`, from RFC 4648 section 3.5. `QQ` and `QR` both
+   describe the single byte `A`, so a program using base64 text as a
+   signature, a cache key or a token needs one spelling per value.
+4. **A character outside the alphabet is refused with its offset.**
+   `B64BadCharacter(at, ch)` gives the position and the byte. Line
+   breaks are such characters. RFC 4648 section 3.3 says to reject them
+   unless the specification using base64 says otherwise, so a caller
+   decoding MIME strips them first.
+5. **A length whose remainder is one is not an encoding of anything.**
+   One leftover character carries six bits of a byte that has eight.
+   `B64BadLength` reports it, and `base64_core.decoded_len` answers a
+   negative number for the same input.
+6. **`encode_into` and `decode_into` write nothing when the destination
+   is short.** They answer `B64BufferTooSmall(need, have)` instead. A
+   half-written buffer is worse than an empty one, because it looks like
+   a document.
+7. **The core modules report a refusal on the value, not as a
+   `Result`.** `B64Dec.bad` latches when a bad character arrives, and
+   `B64Drain.ok` is false for the step that failed. A `@value` function
+   has nowhere to put a `Result` payload, so `base64` converts at the
+   boundary.
+8. **`=` is never fed to `base64_core.feed`.** Padding is a property of
+   the quantum rather than a character with a value, and
+   `base64_core.close` is what reads it.
+9. **The alphabet crosses between the halves as an integer.**
+   `base64.alphabet_code` converts the enum a host caller reads into the
+   integer a `@value` struct can hold. A program that sets a stream up
+   on a host and encodes it on a device needs that one call.
+
+## Running on a microcontroller
+
+novo-lang lets a package state which of its modules can run on a device
+with no heap allocator, and the compiler checks that claim on every
+build. Here the claim covers `base64_core` and nothing else. It takes
+and answers `Int` and `u8`, and it holds no buffer.
+
+`tests/embedded_probe.nv` is that claim as a program that either builds
+or does not. It builds today:
+
+```bash
+novo build --target=nrf52-qemu tests/embedded_probe.nv
 ```
 
-Three bytes in, four characters out, and `count` never reaches three
-because the third byte completes the group and leaves.  `B64Dec` is its
-mirror with a fourth field, `bad`, which latches when a character
-outside the alphabet arrives — a `@value` function has nowhere to put a
-`Result`, so the refusal rides on the value and `base64` turns it into
-one at the boundary.
+The probe produces a Cortex-M4 executable that reads both tables, runs
+the size arithmetic, and drives the encoder and the decoder a byte at a
+time. It builds and it is not run: every function it calls is a `todo()`
+today.
 
-Everything else is that machine with something attached.  `encode` and
-`decode` run it over a whole payload; `encode_into` and `decode_into`
-run it into a `Cursor` the caller sized with `encoded_len`; `encoder`
-and `decoder` hand the raw value back for a caller streaming chunks or
-running on a device.
+**A device cannot use the `base64` module.** That module speaks `Bytes`
+and `Str`, and the embedded runtime defines neither. One host-only
+function anywhere in a compilation unit is an undefined symbol at link
+time on a device, whether or not the firmware calls it. That is why the
+package is two modules.
 
-Two consequences a reviewer should push on:
+## What is not included
 
-- **The alphabet is an integer on the device side and an enum on the
-  host side.**  A `@value` struct holds integers, and a fieldless enum
-  is still a tagged value.  `alphabet_code` is the one function that
-  crosses, and it is the same arrangement bitstream-nv uses for its bit
-  order.
-- **Padding is a property of the document when decoding and an argument
-  when encoding.**  `decode` takes no padding argument at all: the
-  length and the trailing `=` already say which form it is, and a
-  decoder that took the answer as an argument would have two ways to
-  disagree with the bytes.
+- **Base32 and base16.** RFC 4648 sections 6 and 8 define them, and this
+  package is section 4 and section 5 only. `bytes.to_hex` in the
+  standard library is base16.
+- **MIME's line breaks.** RFC 2045 wraps base64 at 76 characters, and
+  this decoder treats a line break as a character outside the alphabet.
+  Strip the breaks before decoding.
+- **A dependency on
+  [bitstream-nv](https://novo-lang.org/packages/bitstream-nv).** A base64
+  quantum is a fixed twenty-four bits and the alphabet is a table
+  lookup, so a general variable-width bit reader would carry a width
+  argument through the inner loop for nothing.
+- **A decoder that guesses the alphabet.** Both alphabets share
+  sixty-two characters, so most documents are valid under either and
+  decode to different bytes.
+- **Any input or output.** Every function here is arithmetic over bytes
+  the caller already holds.
 
-## The layer, and why
+## Related packages
 
-`core`.  Everything here is a table lookup and three shifts over bytes
-the caller already holds, and no function declares an effect.
+- `std.codec` in the standard library has a `Base64` codec, which calls
+  `bytes.to_base64`. That is an extern over a host C symbol: it is one
+  call, it is already linked, and it is the standard alphabet, padded,
+  on a host. It has no URL-safe alphabet, no unpadded form, no size
+  arithmetic and no streaming form, and it does not link on a device.
+- [bech32-nv](https://novo-lang.org/packages/bech32-nv) is another text
+  encoding of bytes, at five bits per character with a checksum over the
+  result. Base64 has no checksum.
+- [ulid-nv](https://novo-lang.org/packages/ulid-nv) encodes a 128-bit
+  identifier in Crockford base32, which is a different alphabet for a
+  fixed-size value.
+- [bitstream-nv](https://novo-lang.org/packages/bitstream-nv) reads and
+  writes runs of bits of any width, which is the general form of the
+  six-bit read this package does.
 
-It carries `tests/embedded_probe.nv`, so the device claim is **built**
-rather than asserted: `base64_core` speaks `Int` and `u8` and nothing
-else, and the probe compiles to a Cortex-M4 ELF for
-`--target=nrf52-qemu`.  That claim is the whole reason this package
-exists beside the standard library — if the probe stopped building,
-there would be little left here that `std.codec` does not already do.
-`base64` is deliberately outside the probe: it speaks `Bytes` and `Str`,
-and one host-only function anywhere in a compilation unit is an
-undefined symbol at embedded link time whether or not the firmware calls
-it.
+## Tests
 
-## Why this does not depend on bitstream-nv
+```bash
+novo test tests/base64_tests.nv        # 26 tests
+```
 
-A reader who has seen bitstream-nv will expect it in the dependency
-list, because base64 is six bits at a time and that is what a bit reader
-does.  Two reasons it is not there.
+Every vector is RFC 4648's own. Section 10 is the specification's test
+suite, the eight lines from `BASE64("")` to `BASE64("foobar")`. Section 9
+is the worked `Man` example the encoder table is derived from. A
+document that passes here is one any conforming decoder reads.
 
-The first is arithmetic: base64's group is a **fixed** twenty-four bits
-and its alphabet is a table lookup, so the whole encoder is one shift
-and four indexed reads.  A general reader that can take any width from 1
-to 64 carries a width argument through that inner loop for no gain.
+The suite asserts that both alphabets encode the eight vectors, that the
+two tables differ in exactly two characters, that a document decoded
+with the wrong alphabet is refused by offset, that the unpadded form is
+the padded one without the `=`, that both forms decode without being
+told which they are, that padding in the middle is refused, that a
+single leftover character is refused, that a final quantum with its
+unused bits set is refused, that a newline is a character outside the
+alphabet, that the size functions answer what a caller sizes a buffer
+with, that the writing calls refuse a short destination, and that the
+host enum maps onto the integer the device half stores.
 
-The second is the device claim: the shard audit builds the embedded
-probe from the package's own core modules and nothing they depend on, so
-a probe that reached a dependency could not be built at all today.  That
-limitation is filed against the toolchain rather than designed around
-here — but with the first reason standing on its own, there is nothing
-to design around.
+The tests compile today and fail at run, each on the `not implemented`
+panic that is its body. That is the expected state of an interface
+release. They turn green one at a time as bodies land.
 
-## The reference implementation
+## Implementation status
 
-`base64` (Rust, MIT/Apache-2.0) and Python's `base64` module for the
-surface, and RFC 4648 for everything else.  Every vector in
-`tests/base64_tests.nv` is from § 10's eight-line test suite or § 9's
-worked "Man" example, so a reader can check the port against the
-specification rather than against this package.
-
-## Status
-
-| function | implemented |
+| Item | Implemented |
 | --- | --- |
 | `base64_core.standard`, `.url_safe`, `.group_bytes`, `.group_chars` | no |
 | `base64_core.encoded_len`, `.decoded_len`, `.symbol`, `.value` | no |
 | `base64_core.encoder`, `.push`, `.finish` | no |
 | `base64_core.decoder`, `.feed`, `.close` | no |
-| `base64.alphabet_code`, `.B64Error.message` | no |
+| `base64.alphabet_code`, `B64Error.message` | no |
 | `base64.encoded_len`, `.decoded_len` | no |
 | `base64.encode`, `.encode_into` | no |
 | `base64.decode`, `.decode_into` | no |
 | `base64.encoder`, `.decoder` | no |
+
+## Licence
+
+Apache-2.0. See `LICENSE`.
+
+<!-- docs/writing-a-readme.md is the style guide for this page. -->

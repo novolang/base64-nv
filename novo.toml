@@ -1,6 +1,6 @@
 [package]
 name        = "base64-nv"
-version     = "0.0.1"
+version     = "0.0.2"
 description = "RFC 4648 base64 as a @value state machine: both alphabets, padded and unpadded, encode into a buffer the caller already owns, and decode with a refusal that names the character and the offset.  The standard library's base64 is a host C symbol; this one is arithmetic, and it compiles for a microcontroller.  Interface only — every body is a todo()."
 license     = "Apache-2.0"
 

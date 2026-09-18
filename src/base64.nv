@@ -1,8 +1,5 @@
 // base64 — RFC 4648 over bytes and text the caller already holds.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
-//
 // WHAT IT IS.  `base64_core` is the state machine — three integers, no
 // buffer, no allocation.  This module is that machine with a `Bytes`
 // source and a `Str` destination attached, so a caller who already has
@@ -24,9 +21,19 @@
 // top of it.  That is what "encode into a caller's buffer" means in
 // practice.
 //
+// WHY DECODING IS TWO PASSES.  `fault` reads the document and writes
+// nothing; only once it has answered `None` does either decoder put a
+// byte anywhere.  That is what makes "nothing is written when the
+// document is refused" true of the caller's buffer and not only of the
+// short-destination case, and it costs one extra pass over text that is
+// already in memory.
+//
 // The two modules share no `use` line: a type declared in one is
 // visible in the other by name, and an import nothing calls is an
 // import the file never uses.
+
+use std.bytes
+use std.str
 
 // Which of RFC 4648's two tables a document uses.
 //
@@ -98,7 +105,91 @@ impl Error for B64Error
     // offset.  The offset is in the text rather than left for the
     // caller to add, because a base64 document has no other landmark.
     fn message(self) -> Str
-        todo("base64.B64Error.message")
+        match self
+            B64BadCharacter(at, ch)       =>
+                "at ${at}: byte ${ch} is not in this base64 alphabet"
+            B64BadLength(len)             =>
+                "${len} characters is not a length base64 produces"
+            B64BadPadding(at)             =>
+                "at ${at}: `=` is only ever at the end, and never more than twice"
+            B64NonCanonicalTail(at, ch)   =>
+                "at ${at}: `${str.from_byte(ch)}` sets bits the final quantum does not carry (RFC 4648 § 3.5)"
+            B64BufferTooSmall(need, have) =>
+                "the destination holds ${have} bytes and the answer is ${need}"
+
+// The padding argument as the boolean `base64_core` takes.
+fn padded(pad: B64Padding) -> Bool
+    match pad
+        B64Padded   => true
+        B64Unpadded => false
+
+// The `=` characters at the end of `s`, counted.
+//
+// Only at the end: this is what tells a padded document from an
+// unpadded one, and `=` anywhere else is `check`'s to refuse.
+fn trailing_pads(s: Str) -> Int
+    var n = str.len(s)
+    var pads = 0
+    while n > 0 and str.byte_at_or(s, n - 1, 0) == 61
+        pads = pads + 1
+        n = n - 1
+    pads
+
+// The length of the document's body — its characters before the
+// padding — or the refusal its shape earns.
+//
+// Reads the length and the trailing `=` and nothing else, so a document
+// full of characters that turn out to be invalid frames just fine and
+// is refused a pass later.  This is what makes `decoded_len` cheap
+// enough to size a buffer with.
+fn frame(s: Str) -> Result<Int, B64Error>
+    let n = str.len(s)
+    let pads = trailing_pads(s)
+    if pads > 2
+        return Err(B64BadPadding(n - pads + 2))
+    if pads > 0 and (n & 3) != 0
+        return Err(B64BadLength(n))
+    let body = n - pads
+    if (body & 3) == 1
+        return Err(B64BadLength(n))
+    Ok(body)
+
+// The refusal the document carries, or `None` if it carries none.
+//
+// The pass both decoders take before either writes a byte: it reads
+// every character of the body through `base64_core` and keeps nothing,
+// so a caller's buffer is untouched by a document that turns out to be
+// bad.
+//
+// THE CHARACTERS COME BEFORE THE LENGTH, and the order is the answer a
+// reader gets rather than an implementation detail.  A MIME document
+// wrapped at 76 characters has a line break in it and a length no
+// encoding produces, and both are true of the same string; the useful
+// half is the line break, because that is the thing to strip.  So an
+// unknown character is reported where it stands and the length is what
+// is left over when every character was in the alphabet.
+fn fault(s: Str, alpha: Int) -> ?B64Error
+    let body = str.len(s) - trailing_pads(s)
+    var d = base64_core.decoder(alpha)
+    for i in 0..body
+        let ch = str.byte_at_or(s, i, 0)
+        if ch == 61
+            return Some(B64BadPadding(i))
+        let step = base64_core.feed(d, ch as u8)
+        if not step.ok
+            return Some(B64BadCharacter(i, ch))
+        d = step.dec
+    match frame(s)
+        Err(e) => Some(e)
+        Ok(_)  =>
+            if not base64_core.close(d).ok
+                // `frame` has already refused a body whose remainder is
+                // one, so the only way to be here is RFC 4648 § 3.5's
+                // tail: the last character sets bits the quantum does
+                // not carry.
+                let at = body - 1
+                return Some(B64NonCanonicalTail(at, str.byte_at_or(s, at, 0)))
+            None
 
 // The alphabet as the integer `base64_core` stores.
 //
@@ -114,7 +205,9 @@ impl Error for B64Error
 //     println("${base64.alphabet_code(B64Standard)}")   // 0
 // ```
 pub fn alphabet_code(a: B64Alphabet) -> Int
-    todo("base64.alphabet_code")
+    match a
+        B64Standard => base64_core.standard()
+        B64UrlSafe  => base64_core.url_safe()
 
 // How many characters `n` bytes encode to.
 //
@@ -129,7 +222,7 @@ pub fn alphabet_code(a: B64Alphabet) -> Int
 //     // 4 2
 // ```
 pub fn encoded_len(n: Int, pad: B64Padding) -> Int
-    todo("base64.encoded_len")
+    base64_core.encoded_len(n, padded(pad))
 
 // How many bytes `s` decodes to, without decoding it.
 //
@@ -148,7 +241,9 @@ pub fn encoded_len(n: Int, pad: B64Padding) -> Int
 //         Err(e) => println(e.message())
 // ```
 pub fn decoded_len(s: Str) -> Result<Int, B64Error>
-    todo("base64.decoded_len")
+    match frame(s)
+        Err(e)   => Err(e)
+        Ok(body) => Ok(base64_core.decoded_len(body, false))
 
 // Encode `src` as text.
 //
@@ -165,7 +260,22 @@ pub fn decoded_len(s: Str) -> Result<Int, B64Error>
 //     // TWFu
 // ```
 pub fn encode(src: Bytes, alphabet: B64Alphabet, pad: B64Padding) -> Str
-    todo("base64.encode")
+    let n = bytes.len(src)
+    let want = base64_core.encoded_len(n, padded(pad))
+    var out = bytes.zeros(want)
+    var w = 0
+    var e = base64_core.encoder(alphabet_code(alphabet))
+    for i in 0..n
+        let step = base64_core.push(e, (bytes.byte_at(src, i) ?? 0) as u8)
+        e = step.enc
+        for k in 0..step.len
+            out = bytes.set_u8(out, w, step.out[k] as Int)
+            w = w + 1
+    let last = base64_core.finish(e, padded(pad))
+    for k in 0..last.len
+        out = bytes.set_u8(out, w, last.out[k] as Int)
+        w = w + 1
+    bytes.to_str(out)
 
 // Encode `src` into a buffer the caller already owns, and answer the
 // characters written.
@@ -179,7 +289,21 @@ pub fn encode(src: Bytes, alphabet: B64Alphabet, pad: B64Padding) -> Str
 // arithmetic that sizes it is `encoded_len`.
 pub fn encode_into(src: Bytes, alphabet: B64Alphabet, pad: B64Padding,
                    mut dst: Cursor) -> Result<Int, B64Error>
-    todo("base64.encode_into")
+    let n = bytes.len(src)
+    let want = base64_core.encoded_len(n, padded(pad))
+    let have = dst.remaining()
+    if want > have
+        return Err(B64BufferTooSmall(want, have))
+    var e = base64_core.encoder(alphabet_code(alphabet))
+    for i in 0..n
+        let step = base64_core.push(e, (bytes.byte_at(src, i) ?? 0) as u8)
+        e = step.enc
+        for k in 0..step.len
+            dst.put_u8(step.out[k] as Int)
+    let last = base64_core.finish(e, padded(pad))
+    for k in 0..last.len
+        dst.put_u8(last.out[k] as Int)
+    Ok(want)
 
 // Decode `s` back to bytes.
 //
@@ -201,16 +325,54 @@ pub fn encode_into(src: Bytes, alphabet: B64Alphabet, pad: B64Padding,
 //         Err(e) => println(e.message())
 // ```
 pub fn decode(s: Str, alphabet: B64Alphabet) -> Result<Bytes, B64Error>
-    todo("base64.decode")
+    let alpha = alphabet_code(alphabet)
+    match fault(s, alpha)
+        Some(e) => Err(e)
+        None    =>
+            let body = str.len(s) - trailing_pads(s)
+            var out = bytes.zeros(base64_core.decoded_len(body, false))
+            var w = 0
+            var d = base64_core.decoder(alpha)
+            for i in 0..body
+                let step = base64_core.feed(d, str.byte_at_or(s, i, 0) as u8)
+                d = step.dec
+                for k in 0..step.len
+                    out = bytes.set_u8(out, w, step.out[k] as Int)
+                    w = w + 1
+            let last = base64_core.close(d)
+            for k in 0..last.len
+                out = bytes.set_u8(out, w, last.out[k] as Int)
+                w = w + 1
+            Ok(out)
 
 // Decode `s` into a buffer the caller already owns, and answer the
 // bytes written.
 //
 // The mirror of `encode_into`, and the same rule: `B64BufferTooSmall`
 // when the cursor has less room than `decoded_len` says, and nothing
-// written in that case.
+// written in that case.  A document refused for any other reason
+// writes nothing either — `check` reads the whole of it before the
+// first byte lands.
 pub fn decode_into(s: Str, alphabet: B64Alphabet, mut dst: Cursor) -> Result<Int, B64Error>
-    todo("base64.decode_into")
+    let alpha = alphabet_code(alphabet)
+    match fault(s, alpha)
+        Some(e) => Err(e)
+        None    =>
+            let body = str.len(s) - trailing_pads(s)
+            let want = base64_core.decoded_len(body, false)
+            let have = dst.remaining()
+            if want > have
+                return Err(B64BufferTooSmall(want, have))
+            var d = base64_core.decoder(alpha)
+            for i in 0..body
+                let step = base64_core.feed(d, str.byte_at_or(s, i, 0) as u8)
+                d = step.dec
+                for k in 0..step.len
+                    dst.put_u8(step.out[k] as Int)
+            let last = base64_core.close(d)
+            for k in 0..last.len
+                dst.put_u8(last.out[k] as Int)
+            Ok(want)
 
 // ── Streaming, for a payload that is larger than memory ─────────────
 
@@ -225,7 +387,7 @@ pub fn decode_into(s: Str, alphabet: B64Alphabet, mut dst: Cursor) -> Result<Int
 // A chunked caller on the host does the same thing one `Bytes` at a
 // time; the encoder is the value it carries between chunks.
 pub fn encoder(alphabet: B64Alphabet) -> B64Enc
-    todo("base64.encoder")
+    base64_core.encoder(alphabet_code(alphabet))
 
 // A decoder over `alphabet`, as `base64_core` holds it.
 //
@@ -233,4 +395,4 @@ pub fn encoder(alphabet: B64Alphabet) -> B64Enc
 // the three bytes each completed group produces, and
 // `base64_core.close` at the end.
 pub fn decoder(alphabet: B64Alphabet) -> B64Dec
-    todo("base64.decoder")
+    base64_core.decoder(alphabet_code(alphabet))

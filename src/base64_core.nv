@@ -1,9 +1,6 @@
 // base64_core — RFC 4648 as a state machine that allocates nothing,
 // holds no buffer, and builds for a microcontroller.
 //
-// Every body is a `todo()`.  The signatures are the design, and the
-// compiler checks them as claims; see the README for the stamp.
-//
 // WHY THERE IS A SECOND MODULE.  `base64` speaks `Bytes` and `Str`, and
 // neither links at the embedded tier: the embedded runtime defines no
 // `novo_bytes_*` symbol, so a device that called one would fail at the
@@ -22,6 +19,18 @@
 // and a fieldless enum is still a tagged value.  `base64` carries the
 // enum a host caller reads and converts once at the boundary, which is
 // the same arrangement `bitstream-nv` uses for its bit order.
+//
+// WHY THE TABLES ARE ARITHMETIC RATHER THAN LISTS.  A sixty-four entry
+// list literal is a heap allocation, which the embedded tier refuses
+// and the allocation scan would find; the alphabet is four contiguous
+// ranges and two special cases, so `symbol` and `value` are a handful
+// of comparisons and an addition each and the tables exist only as the
+// shape of those comparisons.
+//
+// EVERY FUNCTION HERE IS `@tier(embedded)`.  That is the claim checked
+// on every host build as well as on the device one: a `Str`, a list
+// literal or an unbounded `while` introduced anywhere below is refused
+// where it is written rather than at a cross-compile nobody ran.
 
 // The standard alphabet's code: `A`–`Z`, `a`–`z`, `0`–`9`, `+`, `/`
 // (RFC 4648 § 4).
@@ -32,8 +41,9 @@
 // fn main() [io]
 //     println("${base64_core.standard()}")   // 0
 // ```
-pub fn standard() -> Int
-    todo("base64_core.standard")
+pub @tier(embedded)
+fn standard() -> Int
+    0
 
 // The URL- and filename-safe alphabet's code: the same sixty-two
 // alphanumerics, then `-` and `_` (RFC 4648 § 5).
@@ -42,20 +52,23 @@ pub fn standard() -> Int
 // exactly the ones that need escaping in a URL query, in a path segment
 // and in a filename.  A JWT, a WebPush key and a Git object name are
 // all this alphabet.
-pub fn url_safe() -> Int
-    todo("base64_core.url_safe")
+pub @tier(embedded)
+fn url_safe() -> Int
+    1
 
 // The bytes in one group: 3.
-pub fn group_bytes() -> Int
-    todo("base64_core.group_bytes")
+pub @tier(embedded)
+fn group_bytes() -> Int
+    3
 
 // The characters one group encodes to: 4.
 //
 // Four characters for three bytes is where the 4/3 expansion comes
 // from, and it is why a caller sizing a buffer multiplies rather than
 // guesses.
-pub fn group_chars() -> Int
-    todo("base64_core.group_chars")
+pub @tier(embedded)
+fn group_chars() -> Int
+    4
 
 // How many characters `n` bytes encode to.
 //
@@ -72,8 +85,19 @@ pub fn group_chars() -> Int
 //     println("${base64_core.encoded_len(1, true)} ${base64_core.encoded_len(1, false)}")
 //     // 4 2
 // ```
-pub fn encoded_len(n: Int, padded: Bool) -> Int
-    todo("base64_core.encoded_len")
+pub @tier(embedded)
+fn encoded_len(n: Int, padded: Bool) -> Int
+    if n <= 0
+        return 0
+    let whole = n / 3
+    let rem = n - whole * 3
+    if padded
+        if rem == 0
+            return whole * 4
+        return whole * 4 + 4
+    if rem == 0
+        return whole * 4
+    return whole * 4 + rem + 1
 
 // How many bytes `chars` characters decode to, padding characters
 // included in the count when `padded` is true.
@@ -84,15 +108,51 @@ pub fn encoded_len(n: Int, padded: Bool) -> Int
 // reason the whole module is shaped this way: a `@value` module has
 // nowhere to put an allocation, and `base64` answers the `Result` a
 // host caller wants.
-pub fn decoded_len(chars: Int, padded: Bool) -> Int
-    todo("base64_core.decoded_len")
+//
+// Padded, the answer is the count BEFORE the `=` characters are taken
+// off: four padded characters are a group and a group is three bytes,
+// and how many of those three the document actually carries is written
+// in the padding this function was not given.  `base64.decoded_len`
+// reads the padding off the text and subtracts.
+pub @tier(embedded)
+fn decoded_len(chars: Int, padded: Bool) -> Int
+    if chars < 0
+        return 0 - 1
+    let whole = chars / 4
+    let rem = chars - whole * 4
+    if padded
+        if rem != 0
+            return 0 - 1
+        return whole * 3
+    if rem == 1
+        return 0 - 1
+    if rem == 0
+        return whole * 3
+    return whole * 3 + rem - 1
 
 // The character a six-bit value encodes to, as its ASCII byte.
 //
 // `v` is `0 ..= 63`; anything else answers 0, which is not a character
 // in either alphabet and so cannot be mistaken for one.
-pub fn symbol(alphabet: Int, v: Int) -> Int
-    todo("base64_core.symbol")
+pub @tier(embedded)
+fn symbol(alphabet: Int, v: Int) -> Int
+    if v < 0
+        return 0
+    if v < 26
+        return 65 + v
+    if v < 52
+        return 97 + v - 26
+    if v < 62
+        return 48 + v - 52
+    if v == 62
+        if alphabet == 0
+            return 43
+        return 45
+    if v == 63
+        if alphabet == 0
+            return 47
+        return 95
+    0
 
 // The six-bit value a character decodes to, or -1 for a character
 // outside the alphabet.
@@ -108,8 +168,25 @@ pub fn symbol(alphabet: Int, v: Int) -> Int
 // fn main() [io]
 //     println("${base64_core.value(base64_core.standard(), 65)}")   // 0, which is `A`
 // ```
-pub fn value(alphabet: Int, ch: Int) -> Int
-    todo("base64_core.value")
+pub @tier(embedded)
+fn value(alphabet: Int, ch: Int) -> Int
+    if ch >= 65 and ch <= 90
+        return ch - 65
+    if ch >= 97 and ch <= 122
+        return ch - 97 + 26
+    if ch >= 48 and ch <= 57
+        return ch - 48 + 52
+    if alphabet == 0
+        if ch == 43
+            return 62
+        if ch == 47
+            return 63
+        return 0 - 1
+    if ch == 45
+        return 62
+    if ch == 95
+        return 63
+    0 - 1
 
 // An encoder between two bytes: the partial group it has open, and
 // nothing else.
@@ -140,8 +217,9 @@ struct B64Emit
     len: Int
 
 // A fresh encoder over `alphabet`, with no group open.
-pub fn encoder(alphabet: Int) -> B64Enc
-    todo("base64_core.encoder")
+pub @tier(embedded)
+fn encoder(alphabet: Int) -> B64Enc
+    B64Enc { alphabet: alphabet, hold: 0, count: 0 }
 
 // Feed one byte, and answer the encoder after it with the characters to
 // write.
@@ -157,8 +235,21 @@ pub fn encoder(alphabet: Int) -> B64Enc
 //     let e = base64_core.push(base64_core.encoder(base64_core.standard()), 77 as u8)
 //     println("${e.len}")   // 0 — one byte of three
 // ```
-pub fn push(e: B64Enc, b: u8) -> B64Emit
-    todo("base64_core.push")
+pub @tier(embedded)
+fn push(e: B64Enc, b: u8) -> B64Emit
+    let hold = (e.hold << 8) | b as Int
+    let count = e.count + 1
+    if count < 3
+        return B64Emit { enc: B64Enc { alphabet: e.alphabet, hold: hold, count: count },
+            out: [0 as u8, 0 as u8, 0 as u8, 0 as u8],
+            len: 0 }
+    B64Emit {
+        enc: B64Enc { alphabet: e.alphabet, hold: 0, count: 0 },
+        out: [symbol(e.alphabet, (hold >> 18) & 63) as u8,
+              symbol(e.alphabet, (hold >> 12) & 63) as u8,
+              symbol(e.alphabet, (hold >> 6) & 63) as u8,
+              symbol(e.alphabet, hold & 63) as u8],
+        len: 4 }
 
 // Close the message and answer the characters the final partial group
 // needs.
@@ -169,6 +260,10 @@ pub fn push(e: B64Enc, b: u8) -> B64Emit
 // ZERO, which is what RFC 4648 § 3.5 requires of a canonical encoding
 // and what `base64`'s decoder refuses a document for getting wrong.
 //
+// The encoder comes back EMPTY, so a caller that closes one message and
+// starts the next on the same value gets the next message rather than
+// the tail of the last.
+//
 // ```novo
 // use base64_core
 //
@@ -176,8 +271,28 @@ pub fn push(e: B64Enc, b: u8) -> B64Emit
 //     let done = base64_core.finish(base64_core.encoder(base64_core.standard()), true)
 //     println("${done.len}")   // 0 — nothing in, nothing out
 // ```
-pub fn finish(e: B64Enc, padded: Bool) -> B64Emit
-    todo("base64_core.finish")
+pub @tier(embedded)
+fn finish(e: B64Enc, padded: Bool) -> B64Emit
+    let empty = B64Enc { alphabet: e.alphabet, hold: 0, count: 0 }
+    if e.count == 0
+        return B64Emit { enc: empty, out: [0 as u8, 0 as u8, 0 as u8, 0 as u8], len: 0 }
+    if e.count == 1
+        // Eight bits: six in the first character, two in the second
+        // with four zero bits under them.
+        let a = symbol(e.alphabet, (e.hold >> 2) & 63) as u8
+        let b = symbol(e.alphabet, (e.hold << 4) & 63) as u8
+        var n = 2
+        if padded
+            n = 4
+        return B64Emit { enc: empty, out: [a, b, 61 as u8, 61 as u8], len: n }
+    // Sixteen bits: six, six, and four with two zero bits under them.
+    let a = symbol(e.alphabet, (e.hold >> 10) & 63) as u8
+    let b = symbol(e.alphabet, (e.hold >> 4) & 63) as u8
+    let c = symbol(e.alphabet, (e.hold << 2) & 63) as u8
+    var n = 3
+    if padded
+        n = 4
+    B64Emit { enc: empty, out: [a, b, c, 61 as u8], len: n }
 
 // A decoder between two characters: the partial group it has open.
 //
@@ -208,8 +323,9 @@ struct B64Drain
     ok: Bool
 
 // A fresh decoder over `alphabet`, with no group open.
-pub fn decoder(alphabet: Int) -> B64Dec
-    todo("base64_core.decoder")
+pub @tier(embedded)
+fn decoder(alphabet: Int) -> B64Dec
+    B64Dec { alphabet: alphabet, hold: 0, count: 0, bad: false }
 
 // Feed one character, and answer the decoder after it with the bytes to
 // write.
@@ -218,8 +334,34 @@ pub fn decoder(alphabet: Int) -> B64Dec
 // bytes at once.  A `=` is not fed here — it is the absence of a
 // character, and `close` is what reads it — so a caller stripping
 // padding before the loop is doing the right thing.
-pub fn feed(d: B64Dec, ch: u8) -> B64Drain
-    todo("base64_core.feed")
+//
+// A decoder whose `bad` is already latched stays latched and emits
+// nothing, so a caller that feeds the whole document before it looks
+// reads the same refusal as one that checks every step.
+pub @tier(embedded)
+fn feed(d: B64Dec, ch: u8) -> B64Drain
+    if d.bad
+        return B64Drain { dec: d, out: [0 as u8, 0 as u8, 0 as u8], len: 0, ok: false }
+    let v = value(d.alphabet, ch as Int)
+    if v < 0
+        return B64Drain {
+            dec: B64Dec { alphabet: d.alphabet, hold: d.hold, count: d.count, bad: true },
+            out: [0 as u8, 0 as u8, 0 as u8],
+            len: 0,
+            ok: false }
+    let hold = (d.hold << 6) | v
+    let count = d.count + 1
+    if count < 4
+        return B64Drain {
+            dec: B64Dec { alphabet: d.alphabet, hold: hold, count: count, bad: false },
+            out: [0 as u8, 0 as u8, 0 as u8],
+            len: 0,
+            ok: true }
+    B64Drain {
+        dec: B64Dec { alphabet: d.alphabet, hold: 0, count: 0, bad: false },
+        out: [((hold >> 16) & 255) as u8, ((hold >> 8) & 255) as u8, (hold & 255) as u8],
+        len: 3,
+        ok: true }
 
 // Close the document and answer the bytes the final partial group
 // carried.
@@ -229,5 +371,31 @@ pub fn feed(d: B64Dec, ch: u8) -> B64Drain
 // and answers `ok = false`, as does a final quantum whose unused bits
 // are set — RFC 4648 § 3.5 calls that non-canonical, and accepting it
 // would let two different documents decode to the same bytes.
-pub fn close(d: B64Dec) -> B64Drain
-    todo("base64_core.close")
+pub @tier(embedded)
+fn close(d: B64Dec) -> B64Drain
+    let empty = B64Dec { alphabet: d.alphabet, hold: 0, count: 0, bad: false }
+    let stuck = B64Dec { alphabet: d.alphabet, hold: d.hold, count: d.count, bad: true }
+    if d.bad
+        return B64Drain { dec: d, out: [0 as u8, 0 as u8, 0 as u8], len: 0, ok: false }
+    if d.count == 0
+        return B64Drain { dec: empty, out: [0 as u8, 0 as u8, 0 as u8], len: 0, ok: true }
+    if d.count == 1
+        // Six bits of a byte that has eight.
+        return B64Drain { dec: stuck, out: [0 as u8, 0 as u8, 0 as u8], len: 0, ok: false }
+    if d.count == 2
+        // Twelve bits carrying one byte; the low four are the tail RFC
+        // 4648 § 3.5 requires to be zero.
+        if (d.hold & 15) != 0
+            return B64Drain { dec: stuck, out: [0 as u8, 0 as u8, 0 as u8], len: 0, ok: false }
+        return B64Drain { dec: empty,
+            out: [((d.hold >> 4) & 255) as u8, 0 as u8, 0 as u8],
+            len: 1,
+            ok: true }
+    // Eighteen bits carrying two bytes; the low two are the tail.
+    if (d.hold & 3) != 0
+        return B64Drain { dec: stuck, out: [0 as u8, 0 as u8, 0 as u8], len: 0, ok: false }
+    B64Drain {
+        dec: empty,
+        out: [((d.hold >> 10) & 255) as u8, ((d.hold >> 2) & 255) as u8, 0 as u8],
+        len: 2,
+        ok: true }

@@ -220,19 +220,27 @@ package is two modules.
 ## Tests
 
 ```bash
-novo test tests                        # 41 tests in three files
+novo test tests                        # 42 tests in three files
 ```
 
 | File | What it covers |
 | --- | --- |
 | `base64_tests.nv` | 26 tests: the published surface, RFC 4648 section 10's vectors and every named refusal. |
-| `refusal_tests.nv` | 13 tests: the sentence each refusal prints, both tables at the two characters where they differ, and the sizes that answer a negative number. |
+| `refusal_tests.nv` | 14 tests: section 10's vectors on the URL-safe alphabet, the sentence each refusal prints, both tables at the two characters where they differ, and the sizes that answer a negative number. |
 | `differential_tests.nv` | 2 tests: this package against the standard library's base64 over 3,000 pseudo-random byte strings. |
 
 Every vector is RFC 4648's own. Section 10 is the specification's test
-suite, the eight lines from `BASE64("")` to `BASE64("foobar")`. Section 9
+suite, the seven lines from `BASE64("")` to `BASE64("foobar")`. Section 9
 is the worked `Man` example the encoder table is derived from. A
 document that passes here is one any conforming decoder reads.
+
+RFC 4648 publishes those vectors for base64, base32, base32hex and
+base16, and none for the URL- and filename-safe alphabet: section 5
+defines that alphabet by naming the two characters it changes and
+nothing else. So the same seven run on it as well, where they must
+produce identical text, because "foobar" and its prefixes never reach
+the two indexes at which the tables differ. The bytes `0xFB 0xFF` do
+reach them, and they are encoded and decoded on both tables.
 
 The suite asserts that both alphabets encode the eight vectors, that the
 two tables differ in exactly two characters, that a document decoded

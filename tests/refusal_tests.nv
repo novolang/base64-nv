@@ -122,6 +122,56 @@ fn test_decode_into_refuses_a_bad_document_before_it_writes_anything()
     test.assert_eq(dst.pos(), 0)
     test.assert_eq(bytes.to_hex(dst.finish()), "0000000000000000")
 
+// ── RFC 4648 section 10's vectors, on the other alphabet ────────────
+
+@test
+fn test_the_section_10_vectors_on_the_url_safe_alphabet()
+    // RFC 4648 publishes its eight test vectors for base64, base32,
+    // base32hex and base16, and none for base64url — section 5 defines
+    // that alphabet by naming the two characters it changes and
+    // nothing else.  So the vectors are run here on the URL-safe
+    // table, where they must produce the SAME text: "foobar" and its
+    // prefixes never reach index 62 or 63, which are the only two
+    // places the tables differ.  A URL-safe encoder that answered
+    // anything else here would be changing characters it has no
+    // business changing.
+    test.assert_eq(base64.encode(bytes.from_str(""), B64UrlSafe, B64Padded), "")
+    test.assert_eq(base64.encode(bytes.from_str("f"), B64UrlSafe, B64Padded), "Zg==")
+    test.assert_eq(base64.encode(bytes.from_str("fo"), B64UrlSafe, B64Padded), "Zm8=")
+    test.assert_eq(base64.encode(bytes.from_str("foo"), B64UrlSafe, B64Padded), "Zm9v")
+    test.assert_eq(base64.encode(bytes.from_str("foob"), B64UrlSafe, B64Padded), "Zm9vYg==")
+    test.assert_eq(base64.encode(bytes.from_str("fooba"), B64UrlSafe, B64Padded), "Zm9vYmE=")
+    test.assert_eq(base64.encode(bytes.from_str("foobar"), B64UrlSafe, B64Padded), "Zm9vYmFy")
+    // And back, on the same table.
+    match base64.decode("Zm9vYg==", B64UrlSafe)
+        Ok(b)  => test.assert_eq(bytes.to_str(b), "foob")
+        Err(e) => test.fail(e.message())
+    // The unpadded form of every one of them, which is the padded one
+    // with the `=` characters removed and is what a JWT carries.
+    test.assert_eq(base64.encode(bytes.from_str("foob"), B64UrlSafe, B64Unpadded), "Zm9vYg")
+    test.assert_eq(base64.encode(bytes.from_str("fooba"), B64UrlSafe, B64Unpadded), "Zm9vYmE")
+    test.assert_eq(base64.encode(bytes.from_str("foobar"), B64UrlSafe, B64Unpadded), "Zm9vYmFy")
+    // The two characters the alphabets differ in, as a document that
+    // reaches both of them, encoded and decoded on each table.
+    let edges = bytes.from_hex("fbff") ?? bytes.zeros(0)
+    test.assert_eq(base64.encode(edges, B64UrlSafe, B64Padded), "-_8=")
+    test.assert_eq(base64.encode(edges, B64Standard, B64Padded), "+/8=")
+    match base64.decode("-_8=", B64UrlSafe)
+        Ok(b)  => test.assert_eq(bytes.to_hex(b), "fbff")
+        Err(e) => test.fail(e.message())
+    match base64.decode("+/8=", B64Standard)
+        Ok(b)  => test.assert_eq(bytes.to_hex(b), "fbff")
+        Err(e) => test.fail(e.message())
+    // Each table refuses the other's two characters, by offset.
+    match base64.decode("+/8=", B64UrlSafe)
+        Ok(_)  => test.fail("`+` is not in the URL-safe alphabet")
+        Err(e) =>
+            match e
+                B64BadCharacter(at, ch) =>
+                    test.assert_eq(at, 0)
+                    test.assert_eq(ch, 43)
+                _                       => test.fail("expected B64BadCharacter: ${e.message()}")
+
 // ── The two tables, at the two characters that differ ───────────────
 
 @test

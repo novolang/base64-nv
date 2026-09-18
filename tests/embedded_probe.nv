@@ -1,51 +1,45 @@
-// tests/embedded_probe.nv — the package's device claim, as a program
-// that either builds for a Cortex-M or does not, and that now also
-// CHECKS ITS ANSWERS there.
+// tests/embedded_probe.nv — `base64_core` on a microcontroller, as a
+// program that builds for a Cortex-M, boots there and checks its
+// answers.
 //
-// The shard audit's `core-embedded` row copies this and the modules its
-// `use` lines reach into a package of its own and runs
+// This file and the modules its `use` lines reach are built with
 //
-//   novo build --target=nrf52-qemu src/probe.nv
+//   novo build --target=nrf52-qemu tests/embedded_probe.nv
 //
-// which produces a real Cortex-M4 ELF or fails.  For this package the
-// claim is the entire reason it exists beside the standard library:
+// which produces a Cortex-M4 ELF or fails.  Running on a device is the
+// reason the package exists beside the standard library.
 // `bytes.to_base64` is an extern over a host C symbol, and a device
-// that called it would fail at the linker.  If this probe stopped
-// building, the package would have nothing left to offer that
-// `std.codec` does not.
+// that called it would fail at the linker.
 //
-// IT BUILDS AND IT RUNS.  At the 0.0.x interface every function it
-// called was a `todo()` and the tier was all that could be checked;
-// with the bodies in, the same ELF boots under
+// The same ELF boots under
 //
 //   qemu-system-arm -machine mps2-an386 -nographic -semihosting -kernel probe.elf
 //
-// and writes `ok` for each of the four things it checks.  What the
-// BUILD still checks on its own is the tier: `--target=nrf52-qemu`
-// stamps `@tier(embedded)` on every function it compiles, so the
-// checker refuses a `Str` concatenation, a `Bytes` call or an unbounded
-// `while` wherever one is introduced.
+// and writes `ok` for each of the four things it checks.  The build
+// checks something the run cannot.  `--target=nrf52-qemu` stamps
+// `@tier(embedded)` on every function it compiles, so a `Str`
+// concatenation, a `Bytes` call or an unbounded `while` is refused
+// wherever it is written.
 //
-// WHY THE ANSWERS ARE PRINTED AS `ok` AND NOT AS THE CHARACTERS.
-// Turning a byte into text is `str.from_byte`, which is host-only, so a
-// device that printed the encoding would not be a device program.  The
-// comparisons are done against integer literals and the verdict is a
-// literal too.
+// The answers are printed as `ok` rather than as the characters
+// themselves.  Turning a byte into text is `str.from_byte`, which is
+// host-only, so a device that printed the encoding would not be a
+// device program.  The comparisons are made against integer literals
+// and the verdict is a literal too.
 //
-// `base64` IS NOT USED HERE, and that is the split rather than a
-// convenience: that module speaks `Bytes` and `Str`, the embedded
-// runtime defines neither, and one host-only function anywhere in a
-// compilation unit is an undefined symbol at embedded link time whether
-// or not the firmware calls it.
+// The `base64` module is not used here.  It speaks `Bytes` and `Str`,
+// the embedded runtime defines neither, and one host-only function
+// anywhere in a compilation unit is an undefined symbol at link time
+// whether or not the firmware calls it.
 
 use base64_core
 
 // Three bytes the way firmware would hold them.
 //
-// The array is a FIELD of a `@value` struct rather than a return type,
-// because `[u8; 3]` is a true inline array only inside one — outside,
-// the annotation still means a list, and a list literal is an implicit
-// heap allocation the tier refuses (SPEC § 14.4).
+// The array is a field of a `@value` struct rather than a return type.
+// `[u8; 3]` is a true inline array only inside one.  Outside, the
+// annotation still means a list, and a list literal is an implicit heap
+// allocation a device build refuses (SPEC § 14.4).
 @value
 struct ProbeGroup
     b: [u8; 3]
@@ -82,9 +76,9 @@ fn main() [hw]
     good = good and base64_core.encoded_len(64, false) == 86
     say("sizes", good)
 
-    // The two tables, read directly — what a decoder's inner loop does
-    // before it shifts anything, and the two characters where RFC 4648
-    // § 4 and § 5 part company.
+    // The two tables, read directly.  That is what a decoder's inner
+    // loop does before it shifts anything, and it reaches the two
+    // characters where RFC 4648 § 4 and § 5 differ.
     good = base64_core.symbol(std_alpha, 0) == 65
     good = good and base64_core.symbol(std_alpha, 63) == 47
     good = good and base64_core.symbol(url_alpha, 63) == 95
@@ -92,9 +86,10 @@ fn main() [hw]
     good = good and base64_core.value(std_alpha, 45) == 0 - 1
     say("tables", good)
 
-    // The encoder driven byte at a time, which is the shape a device
-    // streaming a sensor batch out as text has: one byte in, zero or
-    // four characters out, and nothing allocated to pass either.
+    // The encoder driven a byte at a time, which is the shape a device
+    // streaming a sensor batch out as text has.  One byte goes in, zero
+    // or four characters come out, and nothing is allocated to pass
+    // either.
     //
     // Each step is bound with its type written out because a call into
     // another module does not have its return type inferred in a

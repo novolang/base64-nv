@@ -1,17 +1,15 @@
 // tests/differential_tests.nv — this package against the standard
 // library's base64, over a few thousand random byte strings.
 //
-// WHY A SECOND IMPLEMENTATION IS THE ORACLE.  RFC 4648 § 10's eight
+// A second implementation is the reference here.  RFC 4648 § 10's eight
 // vectors are in `base64_tests.nv` and they are the specification, but
 // eight documents of at most six bytes do not reach a group boundary
-// twice, a byte above 127, or the two table entries that only a
-// particular bit pattern selects.  `bytes.to_base64` is an extern over
-// a host C symbol — the very thing this package exists to replace on a
-// device — and on a host it is exactly what an independent second
-// opinion should be: written by somebody else, in another language,
-// from the same document.
+// twice, a byte above 127, or the two table entries only a particular
+// bit pattern selects.  `bytes.to_base64` is an extern over a host C
+// symbol, written by somebody else in another language from the same
+// document, which is what an independent second opinion should be.
 //
-// WHAT IS COMPARED, per input:
+// What is compared, for each input:
 //
 //   1. the standard alphabet, padded, against `bytes.to_base64`;
 //   2. our decode of our own text, against the bytes that went in;
@@ -20,22 +18,21 @@
 //   4. the URL-safe alphabet and the unpadded form round-tripping,
 //      which the standard library has no spelling for at all;
 //   5. `encode_into` and `decode_into` over a caller's buffer, against
-//      the allocating pair — the two entry points are one machine and
-//      a difference between them would be this package's own bug.
+//      the allocating pair, because the two entry points are one
+//      machine and a difference between them would be a bug here.
 //
-// THE INPUTS ARE DETERMINISTIC.  The generator is a thirty-two-bit
-// linear congruential sequence written here rather than `std.rand`,
-// for two reasons: a failure has to be reproducible from the file
-// alone, and `rand.int` carries the `[rand]` effect, which a package
-// whose layer is `core` does not spend anywhere — not even in a test,
-// where it would be the only effect in the repository.
+// The inputs are deterministic.  The generator is a thirty-two-bit
+// linear congruential sequence written here rather than `std.rand`, for
+// two reasons.  A failure has to be reproducible from the file alone.
+// And `rand.int` carries the `[rand]` effect, which a package whose
+// layer is `core` spends nowhere, not even in a test.
 //
-// The same file is also a PROGRAM.  `novo test` runs the `@test`
-// functions on the compiled leg; `novo run --interp tests/differential_tests.nv`
-// runs `main`, which is the same loop on the reference interpreter.
-// Both legs are run before a release, because a codegen bug and an
-// interpreter bug are different bugs and either one would be this
-// package's own.
+// The same file is also a program.  `novo test` runs the `@test`
+// functions on compiled code, and
+// `novo run --interp tests/differential_tests.nv` runs `main`, which is
+// the same loop on the reference interpreter.  Both are run before a
+// release, because a code generation bug and an interpreter bug are
+// different bugs.
 
 use std.test
 use std.bytes
@@ -160,9 +157,9 @@ fn test_every_length_across_two_group_boundaries_round_trips()
         test.assert_eq("${n}: ${bad}", "${n}: ")
 
 fn main() [io]
-    // The interpreter leg.  `novo test` runs the two `@test` functions
-    // above on the compiled leg; this is the same comparison on the
-    // reference interpreter, where a codegen bug cannot hide.
+    // The same comparison on the reference interpreter.  `novo test`
+    // runs the two `@test` functions above on compiled code, and a code
+    // generation bug cannot hide from both.
     let bad = sweep()
     if bad != ""
         println("base64-nv differential: FAILED — ${bad}")

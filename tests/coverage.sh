@@ -2,11 +2,11 @@
 # tests/coverage.sh — the measured line coverage over `src/`, merged
 # across the suites.
 #
-# `novo test --cov` measures ONE suite file at a time, and a suite's
-# percentage counts the suite's own lines as well as the package's, so
-# no single number it prints is the one `docs/publishing.md`
+# `novo test --cov` measures one suite file at a time, and a suite's
+# percentage counts the suite's own lines as well as the package's.  No
+# single number it prints is the one `docs/publishing.md`
 # § Test coverage asks for.  This merges the per-suite LCOV and reports
-# `src/` alone, which is what an implemented release is measured on.
+# `src/` alone, which is what a release is measured on.
 #
 # Run from anywhere:  bash tests/coverage.sh
 set -uo pipefail

@@ -1,31 +1,26 @@
 [package]
 name        = "base64-nv"
-version     = "0.1.0"
+version     = "0.1.1"
 description = "RFC 4648 base64 as a @value state machine: both alphabets, padded and unpadded, encode into a buffer the caller already owns, and decode with a refusal that names the character and the offset.  The standard library's base64 is a host C symbol; this one is arithmetic, and it compiles for a microcontroller."
 license     = "Apache-2.0"
 
-# The first release with bodies, published over the 0.0.x interface.
-# `novo pkg publish` refuses a `0.0.x` once a body is real — a
-# half-built package is a 0.1.x with a smaller surface, not a 0.0.x
-# with holes in it — so the version and this line are the promotion.
-# `experimental` because the API tests were written against the
-# signatures before the bodies existed and no consumer has yet argued
-# with either.  Every signature the 0.0.2 interface published is
-# implemented as published; nothing was added and nothing changed.
+# `experimental` because no program outside this repository has used the
+# package yet, and the tests were written against the signatures rather
+# than by a consumer.
 stability   = "experimental"
 
 # `core`: a table lookup and three shifts over bytes the caller already
 # holds.  No function declares an effect.
 #
-# It carries `tests/embedded_probe.nv`, so the device claim is BUILT —
-# and since 0.1.0 the probe also RUNS, checking its four answers on a
-# Cortex-M4 under QEMU.  That claim is the reason the package exists
-# beside `std.codec`: `bytes.to_base64` is an extern over a host C
-# symbol, and a device that called it would fail at the linker.
+# It carries `tests/embedded_probe.nv`, which builds `base64_core` for a
+# Cortex-M4 and checks four answers on it under QEMU.  Running on a
+# device is why the package exists beside `std.codec`: `bytes.to_base64`
+# is an extern over a host C symbol, and a device that called it would
+# fail at the linker.
 #
 # `tests/alloc_scan.sh` reads the emitted LLVM for the other half of
-# the same claim: all fourteen functions of `base64_core` appear in the
-# IR at `--opt=0` and none of them calls the allocator.
+# that: all fourteen functions of `base64_core` appear in the IR at
+# `--opt=0` and none of them calls the allocator.
 layer       = "core"
 
 category    = "encoding"
@@ -40,8 +35,8 @@ novo        = ">= 0.8.9"
 
 [dependencies]
 # None, and bitstream-nv is the one a reader would expect to see here.
-# base64's group is a FIXED twenty-four bits and its alphabet is a table
-# lookup, so a general variable-width bit reader would be slower and
-# would cost the device claim: the embedded probe builds the package's
-# core modules and nothing they depend on.  The README says so where a
-# reader will look for it.
+# base64's group is a fixed twenty-four bits and its alphabet is a table
+# lookup, so a general variable-width bit reader would be slower.  It
+# would also cost the build for a device, which is made from the
+# package's own core modules and nothing they depend on.  The README
+# says so where a reader will look for it.

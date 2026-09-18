@@ -9,11 +9,10 @@
 // allocation to, and an assertion that no core function allocates
 // would pass because no core function is there.
 //
-// EVERY FUNCTION IS CALLED, because a function the probe never reaches
-// is a function the linker drops and the scan never sees.  The
-// `base64` module is NOT here: it allocates, that is what it is for —
-// a `Str` out of `encode`, a `Bytes` out of `decode` — and reading its
-// IR would only prove it.
+// Every function is called, because a function the probe never reaches
+// is one the linker drops and the scan never sees.  The `base64` module
+// is not here.  It allocates, which is what it is for: a `Str` out of
+// `encode`, a `Bytes` out of `decode`.
 //
 // The numbers are printed rather than checked; the vector suites own
 // correctness.  This one is here to be read as text.
@@ -21,8 +20,8 @@
 use std.str
 use base64_core
 
-// Three bytes held the way firmware holds them: a fixed inline array
-// in a `@value` struct, which is the one spelling that is not a list.
+// Three bytes held the way firmware holds them.  A fixed inline array
+// in a `@value` struct is the one spelling that is not a list.
 @value
 struct ProbeGroup
     b: [u8; 3]
@@ -54,8 +53,8 @@ fn tables() -> Int
         score = score + base64_core.value(std_alpha, ch) + base64_core.value(url_alpha, ch)
     score
 
-// The encoder driven a byte at a time, then closed in both forms — the
-// shape a device streaming a sensor batch out as text has.
+// The encoder driven a byte at a time, then closed in both forms.  That
+// is the shape a device streaming a sensor batch out as text has.
 fn encode_path(padded: Bool) -> Int
     let src = probe_group()
     var score = 0
@@ -76,7 +75,7 @@ fn encode_path(padded: Bool) -> Int
     score = score + base64_core.finish(e, padded).len
     score
 
-// The decoder's mirror: a whole group, both short tails, a character
+// The decoder's mirror.  A whole group, both short tails, a character
 // outside the alphabet, and a feed after the latch.
 fn decode_path() -> Int
     let std_alpha = base64_core.standard()
@@ -95,7 +94,7 @@ fn decode_path() -> Int
     score = score + base64_core.close(b.dec).len
     let c = base64_core.feed(b.dec, 56 as u8)
     score = score + base64_core.close(c.dec).len
-    // One character, which is not an encoding of anything, and a tail
+    // One character, which is not an encoding of anything, then a tail
     // whose unused bits are set.
     score = score + base64_core.close(a.dec).len
     let tail = base64_core.feed(base64_core.decoder(std_alpha), 104 as u8)

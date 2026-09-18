@@ -7,14 +7,6 @@ also defines a second alphabet for use in URLs and filenames. This
 package brings both alphabets to novo-lang, in a form that also builds
 for a microcontroller.
 
-**Status: implemented, and experimental.** Every function has a body,
-every published signature is the one version 0.0.2 declared, and the
-tests are green. The stability is experimental because the tests were
-written against the signatures before the bodies existed and no program
-outside this repository has used the package yet. Base32 and base16 are
-not here, and neither is MIME's line wrapping; see "What is not
-included".
-
 ## What base64 is
 
 Base64 reads the message three bytes at a time. Those twenty-four bits
@@ -149,12 +141,12 @@ microcontroller".
 
 ## Running on a microcontroller
 
-novo-lang lets a package state which of its modules can run on a device
-with no heap allocator, and the compiler checks that claim on every
-build. Here the claim covers `base64_core` and nothing else. It takes
-and answers `Int` and `u8`, and it holds no buffer.
+`base64_core` builds for a device with no heap allocator, and the rest
+of the package does not. It takes and answers `Int` and `u8`, and it
+holds no buffer. The compiler checks that on every build, on a host as
+well as for a board.
 
-`tests/embedded_probe.nv` is that claim as a program:
+`tests/embedded_probe.nv` is the module as a device program:
 
 ```bash
 novo build --target=nrf52-qemu tests/embedded_probe.nv
@@ -263,22 +255,6 @@ novo-lang code are checked.
 
 Every line of `src/` is executed by the suites. `bash tests/coverage.sh`
 measures it and prints the number.
-
-## Implementation status
-
-| Item | Implemented |
-| --- | --- |
-| `base64_core.standard`, `.url_safe`, `.group_bytes`, `.group_chars` | yes |
-| `base64_core.encoded_len`, `.decoded_len`, `.symbol`, `.value` | yes |
-| `base64_core.encoder`, `.push`, `.finish` | yes |
-| `base64_core.decoder`, `.feed`, `.close` | yes |
-| `base64.alphabet_code`, `B64Error.message` | yes |
-| `base64.encoded_len`, `.decoded_len` | yes |
-| `base64.encode`, `.encode_into` | yes |
-| `base64.decode`, `.decode_into` | yes |
-| `base64.encoder`, `.decoder` | yes |
-| Runs on a microcontroller with no heap allocator | yes, `base64_core` only |
-| Base32, base16, MIME line wrapping, a decoder that guesses the alphabet | no, and not planned |
 
 ## Licence
 

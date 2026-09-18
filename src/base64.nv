@@ -1,42 +1,37 @@
 // base64 — RFC 4648 over bytes and text the caller already holds.
 //
-// WHAT IT IS.  `base64_core` is the state machine — three integers, no
-// buffer, no allocation.  This module is that machine with a `Bytes`
-// source and a `Str` destination attached, so a caller who already has
-// the whole payload does not write the group loop.  Everything here is
-// arithmetic over bytes the caller holds; nothing is read and nothing
-// is written, which is why the layer is `core` and no function declares
-// an effect.
+// `base64_core` is the state machine: three integers, no buffer and no
+// allocation.  This module is that machine with a `Bytes` source and a
+// `Str` destination attached, so a caller who already has the whole
+// payload does not write the group loop.  Everything here is arithmetic
+// over bytes the caller holds.  Nothing is read and nothing is written,
+// which is why the layer is `core` and no function declares an effect.
 //
-// HOW IT DIFFERS FROM `std.codec`.  The standard library's `Base64`
-// codec calls `bytes.to_base64`, which is an extern over a host C
-// symbol: it is the right thing to reach for on a host, it has no
-// URL-safe alphabet, no unpadded form, no size arithmetic and no way to
-// encode a stream a chunk at a time, and it does not link on a device.
-// The README has the table of which to use when.
+// The standard library's `Base64` codec calls `bytes.to_base64`, which
+// is an extern over a host C symbol.  It is the right thing to reach
+// for on a host.  It has no URL-safe alphabet, no unpadded form, no
+// size arithmetic and no way to encode a stream a chunk at a time, and
+// it does not link on a device.  The README has the table saying which
+// one to reach for.
 //
-// WHY THE SIZES COME FIRST.  A caller that wants `encode_into` has to
-// size the destination before it can make one, so `encoded_len` and
-// `decoded_len` are part of the interface rather than a convenience on
-// top of it.  That is what "encode into a caller's buffer" means in
-// practice.
+// The size functions come first because a caller that wants
+// `encode_into` has to size the destination before it can make one.
+// `encoded_len` and `decoded_len` are part of the published surface
+// rather than a convenience on top of it.
 //
-// WHY DECODING IS TWO PASSES.  `fault` reads the document and writes
-// nothing; only once it has answered `None` does either decoder put a
-// byte anywhere.  That is what makes "nothing is written when the
-// document is refused" true of the caller's buffer and not only of the
-// short-destination case, and it costs one extra pass over text that is
-// already in memory.
+// Decoding reads the document twice.  `fault` reads it and writes
+// nothing, and only once it has answered `None` does either decoder put
+// a byte anywhere.  So nothing is written for any refusal and not only
+// for a destination that was too short, at the cost of one extra pass
+// over text that is already in memory.
 //
-// THE `use base64_core` LINE IS LOAD-BEARING.  A TYPE declared in the
-// other module is visible here by name with no import — `B64Enc` below
-// is spelled bare — but a CALL is not: `base64_core.encoder` needs the
-// module in scope, and this package has two functions named `encoder`
-// with one argument each.  Without the import, a single-file build
-// resolves the qualified call to the one in THIS module and reports a
-// type error at a line that is correct.  The published 0.0.x interface
-// had no bodies and so no calls, and the missing line only showed once
-// there were.
+// The `use base64_core` line below is needed for the calls.  A type
+// declared in the other module is visible here by name with no import,
+// which is why `B64Enc` is spelled bare, but a call is not.
+// `base64_core.encoder` needs the module in scope, and this package has
+// two functions named `encoder` with one argument each.  Without the
+// import a single-file build resolves the qualified call to the one in
+// this module and reports a type error at a line that is correct.
 
 use std.bytes
 use std.str
@@ -44,9 +39,9 @@ use base64_core
 
 // Which of RFC 4648's two tables a document uses.
 //
-// The two differ in two characters out of sixty-four, and a document
-// decoded with the wrong one does not fail — it produces different
-// bytes — so the alphabet is an argument with no default on every call
+// The two differ in two characters out of sixty-four.  A document
+// decoded with the wrong one does not fail, it produces different
+// bytes, so the alphabet is an argument with no default on every call
 // that could care.
 pub enum B64Alphabet
     // `A`–`Z`, `a`–`z`, `0`–`9`, `+`, `/` (RFC 4648 § 4).  What `base64`
@@ -58,11 +53,11 @@ pub enum B64Alphabet
 
 // Whether a document ends with `=` characters up to a multiple of four.
 //
-// Padding carries no information — the length already says how many
-// bytes the last group held — so it exists to let a decoder that
-// concatenates documents find the boundaries.  A caller decoding one
-// document does not need it, which is why the URL-safe world mostly
-// dropped it.
+// Padding carries no information, because the length already says how
+// many bytes the last group held.  It exists to let a decoder reading
+// concatenated documents find the boundaries.  A caller decoding one
+// document does not need it, which is why most URL-safe uses dropped
+// it.
 pub enum B64Padding
     // `=` up to a multiple of four.  RFC 4648 § 3.2 requires this
     // unless the specification using base64 says otherwise.
@@ -73,7 +68,7 @@ pub enum B64Padding
 
 // What went wrong decoding, or sizing a buffer to encode into.
 //
-// The names are prefixed because a variant is constructed by name
+// The names carry a prefix because a variant is constructed by name
 // across the whole assembly, and `BadLength` is the name every codec
 // wants.
 pub enum B64Error
@@ -94,11 +89,11 @@ pub enum B64Error
     B64BadPadding(at: Int)
     // A final quantum whose unused low bits are not zero.
     //
-    // RFC 4648 § 3.5 calls this non-canonical, and it matters rather
-    // than being pedantry: `QQ` and `QR` both decode to the single byte
-    // `A`, so a system that treats a base64 string as an identity — a
-    // signature, a cache key, a token — has two spellings of the same
-    // value unless the decoder refuses one.
+    // RFC 4648 § 3.5 calls this non-canonical.  `QQ` and `QR` both
+    // decode to the single byte `A`, so a system that treats a base64
+    // string as an identity, such as a signature, a cache key or a
+    // token, has two spellings of one value unless the decoder refuses
+    // one.
     B64NonCanonicalTail(at: Int, ch: Int)
     // The destination handed to `encode_into` or `decode_into` was
     // shorter than the answer.  `need` is what `encoded_len` or
@@ -108,9 +103,10 @@ pub enum B64Error
 // The standard `Error` implementation, so a bad document can be
 // reported by anything that reports errors.
 impl Error for B64Error
-    // Answer the one-line report: what was wrong, and at what character
-    // offset.  The offset is in the text rather than left for the
-    // caller to add, because a base64 document has no other landmark.
+    // Answer the one-line report, naming what was wrong and the
+    // character offset it was at.  The offset is in the message rather
+    // than left for the caller to add, because a base64 document has no
+    // other landmark.
     fn message(self) -> Str
         match self
             B64BadCharacter(at, ch)       =>
@@ -132,8 +128,9 @@ fn padded(pad: B64Padding) -> Bool
 
 // The `=` characters at the end of `s`, counted.
 //
-// Only at the end: this is what tells a padded document from an
-// unpadded one, and `=` anywhere else is `check`'s to refuse.
+// Only the ones at the end are counted, because they are what tells a
+// padded document from an unpadded one.  `=` anywhere else is `fault`'s
+// to refuse.
 fn trailing_pads(s: Str) -> Int
     let n = str.len(s)
     var pads = 0
@@ -148,7 +145,7 @@ fn trailing_pads(s: Str) -> Int
 //
 // Reads the length and the trailing `=` and nothing else, so a document
 // full of characters that turn out to be invalid frames just fine and
-// is refused a pass later.  This is what makes `decoded_len` cheap
+// is refused a pass later.  That is what makes `decoded_len` cheap
 // enough to size a buffer with.
 fn frame(s: Str) -> Result<Int, B64Error>
     let n = str.len(s)
@@ -164,18 +161,19 @@ fn frame(s: Str) -> Result<Int, B64Error>
 
 // The refusal the document carries, or `None` if it carries none.
 //
-// The pass both decoders take before either writes a byte: it reads
+// The pass both decoders take before either writes a byte.  It reads
 // every character of the body through `base64_core` and keeps nothing,
 // so a caller's buffer is untouched by a document that turns out to be
 // bad.
 //
-// THE CHARACTERS COME BEFORE THE LENGTH, and the order is the answer a
-// reader gets rather than an implementation detail.  A MIME document
-// wrapped at 76 characters has a line break in it and a length no
-// encoding produces, and both are true of the same string; the useful
-// half is the line break, because that is the thing to strip.  So an
-// unknown character is reported where it stands and the length is what
-// is left over when every character was in the alphabet.
+// A character outside the alphabet is reported before a length no
+// encoding produces, and the order is part of the answer a reader gets.
+// A MIME document wrapped at 76 characters has a line break in it and a
+// length no encoding produces, and both are true of the same string.
+// The line break is the useful half, because that is the thing to
+// strip.  An unknown character is therefore reported where it stands,
+// and the length is what is left over once every character was in the
+// alphabet.
 fn fault(s: Str, alpha: Int) -> ?B64Error
     let body = str.len(s) - trailing_pads(s)
     var d = base64_core.decoder(alpha)
@@ -201,10 +199,10 @@ fn fault(s: Str, alpha: Int) -> ?B64Error
 
 // The alphabet as the integer `base64_core` stores.
 //
-// The bridge between the two halves: the enum is what a host caller
+// The bridge between the two halves.  The enum is what a host caller
 // reads, and the integer is what survives `@value` on a device.  A
 // program that sets a stream up on the host and encodes it on a device
-// needs exactly this one function.
+// needs this one function.
 //
 // ```novo
 // use base64
@@ -234,11 +232,11 @@ pub fn encoded_len(n: Int, pad: B64Padding) -> Int
 
 // How many bytes `s` decodes to, without decoding it.
 //
-// Reads the length and the trailing `=` characters and nothing else, so
-// it is `B64BadLength` for a length no encoding can produce and `Ok`
+// Reads the length and the trailing `=` characters and nothing else.
+// It is `B64BadLength` for a length no encoding can produce, and `Ok`
 // for a document full of characters that turn out to be invalid.  A
-// caller sizing a destination wants the number; a caller validating
-// wants `decode`.
+// caller sizing a destination wants the number, and a caller checking a
+// document wants `decode`.
 //
 // ```novo
 // use base64
@@ -256,8 +254,8 @@ pub fn decoded_len(s: Str) -> Result<Int, B64Error>
 // Encode `src` as text.
 //
 // The call for a caller who wants the string and does not care where
-// the bytes came from.  It cannot fail: every byte sequence has an
-// encoding.
+// the bytes came from.  It cannot fail, because every byte sequence has
+// an encoding.
 //
 // ```novo
 // use std.bytes
@@ -288,13 +286,14 @@ pub fn encode(src: Bytes, alphabet: B64Alphabet, pad: B64Padding) -> Str
 // Encode `src` into a buffer the caller already owns, and answer the
 // characters written.
 //
-// `B64BufferTooSmall` when the cursor has less room than `encoded_len`
-// says, and nothing is written in that case — a partially encoded
-// buffer is worse than none, because it looks like a document.
+// The answer is `B64BufferTooSmall` when the cursor has less room than
+// `encoded_len` says, and nothing is written in that case.  A partially
+// encoded buffer is worse than none, because it looks like a
+// document.
 //
-// This is the call the package exists for: a program that encodes on a
-// schedule allocates the destination once and reuses it, and the
-// arithmetic that sizes it is `encoded_len`.
+// This is the call for a program that encodes on a schedule.  It
+// allocates the destination once and reuses it, and the arithmetic that
+// sizes it is `encoded_len`.
 pub fn encode_into(src: Bytes, alphabet: B64Alphabet, pad: B64Padding,
                    mut dst: Cursor) -> Result<Int, B64Error>
     let n = bytes.len(src)
@@ -315,12 +314,12 @@ pub fn encode_into(src: Bytes, alphabet: B64Alphabet, pad: B64Padding,
 
 // Decode `s` back to bytes.
 //
-// Padding is accepted or rejected by the document rather than by an
-// argument: a string that ends in `=` is padded and one that does not
-// is not, and both are read.  What is NOT accepted is `=` in the middle
+// The document says whether it is padded, rather than an argument.  A
+// string that ends in `=` is padded and one that does not is not, and
+// both are read.  Four things are refused: `=` in the middle
 // (`B64BadPadding`), a character outside the alphabet
 // (`B64BadCharacter`), a length no encoding produces (`B64BadLength`),
-// or a final quantum with its unused bits set
+// and a final quantum with its unused bits set
 // (`B64NonCanonicalTail`).
 //
 // ```novo
@@ -356,11 +355,11 @@ pub fn decode(s: Str, alphabet: B64Alphabet) -> Result<Bytes, B64Error>
 // Decode `s` into a buffer the caller already owns, and answer the
 // bytes written.
 //
-// The mirror of `encode_into`, and the same rule: `B64BufferTooSmall`
-// when the cursor has less room than `decoded_len` says, and nothing
-// written in that case.  A document refused for any other reason
-// writes nothing either — `check` reads the whole of it before the
-// first byte lands.
+// The mirror of `encode_into`, under the same rule.  It answers
+// `B64BufferTooSmall` when the cursor has less room than `decoded_len`
+// says, and writes nothing in that case.  A document refused for any
+// other reason writes nothing either, because `fault` reads the whole
+// of it before the first byte lands.
 pub fn decode_into(s: Str, alphabet: B64Alphabet, mut dst: Cursor) -> Result<Int, B64Error>
     let alpha = alphabet_code(alphabet)
     match fault(s, alpha)
@@ -387,10 +386,10 @@ pub fn decode_into(s: Str, alphabet: B64Alphabet, mut dst: Cursor) -> Result<Int
 // An encoder over `alphabet`, as `base64_core` holds it.
 //
 // The handoff to the device half, and the answer for a caller encoding
-// a stream: feed bytes with `base64_core.push`, write the four
-// characters each completed group produces, and `base64_core.finish`
-// when the stream ends.  Nothing is buffered, so the payload never has
-// to fit anywhere.
+// a stream.  Feed bytes with `base64_core.push`, write the four
+// characters each completed group produces, and call
+// `base64_core.finish` when the stream ends.  Nothing is buffered, so
+// the payload never has to fit anywhere.
 //
 // A chunked caller on the host does the same thing one `Bytes` at a
 // time; the encoder is the value it carries between chunks.
@@ -399,8 +398,8 @@ pub fn encoder(alphabet: B64Alphabet) -> B64Enc
 
 // A decoder over `alphabet`, as `base64_core` holds it.
 //
-// The mirror of `encoder`, and the same shape: feed characters, take
-// the three bytes each completed group produces, and
+// The mirror of `encoder`, in the same shape.  Feed characters, take
+// the three bytes each completed group produces, and call
 // `base64_core.close` at the end.
 pub fn decoder(alphabet: B64Alphabet) -> B64Dec
     base64_core.decoder(alphabet_code(alphabet))

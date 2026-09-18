@@ -1,36 +1,35 @@
 // base64_core — RFC 4648 as a state machine that allocates nothing,
 // holds no buffer, and builds for a microcontroller.
 //
-// WHY THERE IS A SECOND MODULE.  `base64` speaks `Bytes` and `Str`, and
-// neither links at the embedded tier: the embedded runtime defines no
-// `novo_bytes_*` symbol, so a device that called one would fail at the
-// linker rather than at the type checker.  One host-only function
-// anywhere in a compilation unit is an undefined symbol on a device
-// whether or not the firmware calls it, so the half a device uses is
-// its own module and takes and returns integers.
+// The package is two modules because `base64` speaks `Bytes` and `Str`
+// and the embedded runtime defines neither.  A device that called one
+// would fail at the linker rather than at the type checker, and one
+// host-only function anywhere in a compilation unit is an undefined
+// symbol whether or not the firmware calls it.  The half a device uses
+// is therefore its own module, and it takes and returns integers.
 //
-// THE STATE IS TWO INTEGERS AND AN ALPHABET.  `hold` is the bits of the
-// current twenty-four-bit group that have arrived, `count` is how many
-// bytes of the three are in, and `alphabet` chooses between the two
-// tables RFC 4648 defines.  Three bytes in, four characters out; a
-// group that ends short is what padding is for.
+// The state is two integers and an alphabet.  `hold` is the bits of the
+// current twenty-four-bit group that have arrived.  `count` is how many
+// of the three bytes are in.  `alphabet` chooses between the two tables
+// RFC 4648 defines.  Three bytes go in and four characters come out,
+// and a group that ends short is what padding is for.
 //
-// WHY THE ALPHABET IS AN INTEGER.  A `@value` struct holds integers,
-// and a fieldless enum is still a tagged value.  `base64` carries the
-// enum a host caller reads and converts once at the boundary, which is
-// the same arrangement `bitstream-nv` uses for its bit order.
+// The alphabet is an integer rather than an enum.  A `@value` struct
+// holds integers, and a fieldless enum is still a tagged value.
+// `base64` carries the enum a host caller reads and converts once at
+// the boundary, which is the arrangement `bitstream-nv` uses for its
+// bit order.
 //
-// WHY THE TABLES ARE ARITHMETIC RATHER THAN LISTS.  A sixty-four entry
-// list literal is a heap allocation, which the embedded tier refuses
-// and the allocation scan would find; the alphabet is four contiguous
-// ranges and two special cases, so `symbol` and `value` are a handful
-// of comparisons and an addition each and the tables exist only as the
-// shape of those comparisons.
+// The two tables are arithmetic rather than lists.  A sixty-four entry
+// list literal is a heap allocation, and this module puts nothing on
+// the heap.  The alphabet is four contiguous ranges and two special
+// cases, so `symbol` and `value` are a handful of comparisons and an
+// addition each, and the tables exist only as the shape of those
+// comparisons.
 //
-// EVERY FUNCTION HERE IS `@tier(embedded)`.  That is the claim checked
-// on every host build as well as on the device one: a `Str`, a list
-// literal or an unbounded `while` introduced anywhere below is refused
-// where it is written rather than at a cross-compile nobody ran.
+// Every function here carries `@tier(embedded)`.  A `Str`, a list
+// literal or an unbounded `while` written anywhere below is refused
+// where it stands rather than at a cross-compile nobody ran.
 
 // The standard alphabet's code: `A`–`Z`, `a`–`z`, `0`–`9`, `+`, `/`
 // (RFC 4648 § 4).
@@ -102,18 +101,17 @@ fn encoded_len(n: Int, padded: Bool) -> Int
 // How many bytes `chars` characters decode to, padding characters
 // included in the count when `padded` is true.
 //
-// Answers a negative number for a length no encoding can produce — a
-// padded length that is not a multiple of four, or an unpadded length
-// whose remainder is one.  A negative rather than a `Result` for the
-// reason the whole module is shaped this way: a `@value` module has
-// nowhere to put an allocation, and `base64` answers the `Result` a
-// host caller wants.
+// Answers a negative number for a length no encoding can produce.  That
+// is a padded length that is not a multiple of four, or an unpadded
+// length whose remainder is one.  The answer is a negative number
+// rather than a `Result` because a `@value` module has nowhere to put
+// an allocation.  `base64` answers the `Result` a host caller wants.
 //
-// Padded, the answer is the count BEFORE the `=` characters are taken
-// off: four padded characters are a group and a group is three bytes,
-// and how many of those three the document actually carries is written
-// in the padding this function was not given.  `base64.decoded_len`
-// reads the padding off the text and subtracts.
+// Padded, the answer is the count before the `=` characters are taken
+// off.  Four padded characters are a group and a group is three bytes,
+// and how many of those three the document carries is written in the
+// padding this function was not given.  `base64.decoded_len` reads the
+// padding off the text and subtracts.
 pub @tier(embedded)
 fn decoded_len(chars: Int, padded: Bool) -> Int
     if chars < 0
@@ -257,10 +255,10 @@ fn push(e: B64Enc, b: u8) -> B64Emit
 // A group that consumed nothing emits nothing.  One leftover byte emits
 // two characters, two leftover bytes emit three, and `padded` adds `=`
 // characters up to four.  The unused low bits of the last character are
-// ZERO, which is what RFC 4648 § 3.5 requires of a canonical encoding
+// zero, which is what RFC 4648 § 3.5 requires of a canonical encoding
 // and what `base64`'s decoder refuses a document for getting wrong.
 //
-// The encoder comes back EMPTY, so a caller that closes one message and
+// The encoder comes back empty, so a caller that closes one message and
 // starts the next on the same value gets the next message rather than
 // the tail of the last.
 //
@@ -367,10 +365,10 @@ fn feed(d: B64Dec, ch: u8) -> B64Drain
 // carried.
 //
 // Two leftover characters carry one byte, three carry two, and none
-// carries none.  ONE leftover character is not an encoding of anything
-// and answers `ok = false`, as does a final quantum whose unused bits
-// are set — RFC 4648 § 3.5 calls that non-canonical, and accepting it
-// would let two different documents decode to the same bytes.
+// carries none.  A single leftover character is not an encoding of
+// anything and answers `ok = false`.  So does a final quantum whose
+// unused bits are set.  RFC 4648 § 3.5 calls that non-canonical,
+// because two different documents then decode to the same bytes.
 pub @tier(embedded)
 fn close(d: B64Dec) -> B64Drain
     let empty = B64Dec { alphabet: d.alphabet, hold: 0, count: 0, bad: false }

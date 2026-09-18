@@ -3,14 +3,13 @@
 // where they part company, and the arithmetic's answers for inputs no
 // document produces.
 //
-// `tests/base64_tests.nv` is the API suite written against the
-// published signatures, and it is the specification.  This file is what
-// the implementation owes on top of it: the arms that suite does not
-// reach, so that every line under `src/` is one a test has run.  They
-// are separate files because they answer different questions — "does
-// the package do what it published" and "is any of it unexercised" —
-// and a reader looking for the first should not have to read the
-// second.
+// `tests/base64_tests.nv` is the suite written against the published
+// signatures, and it is the specification.  This file covers the arms
+// that suite does not reach, so that every line under `src/` is one a
+// test has run.  They are separate files because they answer different
+// questions.  One asks whether the package does what it published, the
+// other whether any of it is unexercised, and a reader looking for the
+// first should not have to read the second.
 
 use std.test
 use std.bytes
@@ -37,8 +36,9 @@ fn test_every_refusal_names_what_and_where()
 
 @test
 fn test_more_than_two_padding_characters_is_refused_at_the_third()
-    // Two is the longest run RFC 4648 § 3.2 can produce: a group short
-    // by one byte. A third is not padding, it is a character.
+    // Two is the longest run RFC 4648 § 3.2 can produce, from a group
+    // short by one byte.  A third `=` is not padding, it is a
+    // character.
     match base64.decode("Zg===", B64Standard)
         Ok(_)  => test.fail("three `=` is not a quantum")
         Err(e) =>
@@ -57,7 +57,8 @@ fn test_a_document_that_is_nothing_but_padding_is_refused()
             match e
                 B64BadPadding(at) => test.assert_eq(at, 2)
                 _                 => test.fail("expected B64BadPadding: ${e.message()}")
-    // The empty document, which IS one: zero characters are zero bytes.
+    // The empty document is a document.  Zero characters are zero
+    // bytes.
     match base64.decode("", B64Standard)
         Ok(b)  => test.assert_eq(bytes.len(b), 0)
         Err(e) => test.fail(e.message())
@@ -129,12 +130,12 @@ fn test_the_section_10_vectors_on_the_url_safe_alphabet()
     // RFC 4648 publishes its eight test vectors for base64, base32,
     // base32hex and base16, and none for base64url — section 5 defines
     // that alphabet by naming the two characters it changes and
-    // nothing else.  So the vectors are run here on the URL-safe
-    // table, where they must produce the SAME text: "foobar" and its
+    // nothing else.  The vectors are run here on the URL-safe table,
+    // where they must produce identical text.  "foobar" and its
     // prefixes never reach index 62 or 63, which are the only two
     // places the tables differ.  A URL-safe encoder that answered
-    // anything else here would be changing characters it has no
-    // business changing.
+    // anything else would be changing characters it has no business
+    // changing.
     test.assert_eq(base64.encode(bytes.from_str(""), B64UrlSafe, B64Padded), "")
     test.assert_eq(base64.encode(bytes.from_str("f"), B64UrlSafe, B64Padded), "Zg==")
     test.assert_eq(base64.encode(bytes.from_str("fo"), B64UrlSafe, B64Padded), "Zm8=")
@@ -196,14 +197,14 @@ fn test_both_tables_answer_at_index_sixty_two_and_sixty_three()
 
 @test
 fn test_a_six_bit_value_outside_the_table_is_not_a_character()
-    // `symbol` answers 0, which is NUL and is in neither alphabet, so a
-    // caller that passed a bad index writes something no decoder will
-    // read back rather than a character that silently means something.
+    // `symbol` answers 0, which is NUL and is in neither alphabet.  A
+    // caller that passed a bad index writes something no decoder reads
+    // back, rather than a character that quietly means something.
     let std_alpha = base64_core.standard()
     test.assert_eq(base64_core.symbol(std_alpha, 0 - 1), 0)
     test.assert_eq(base64_core.symbol(std_alpha, 64), 0)
-    // `=` is outside the alphabet on the way in: it is a property of
-    // the group and `close` is what reads it.
+    // `=` is outside the alphabet on the way in.  It is a property of
+    // the group, and `close` is what reads it.
     test.assert_eq(base64_core.value(std_alpha, 61), 0 - 1)
 
 // ── The size arithmetic, where it answers a negative ────────────────

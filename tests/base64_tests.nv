@@ -1,16 +1,11 @@
-// tests/base64_tests.nv — the API tests, written against the
-// signatures.
+// tests/base64_tests.nv — the tests of the published surface, written
+// against the signatures.
 //
-// They COMPILE today and they FAIL at run, with `not implemented:
-// base64.<fn>` from the `todo()` that is each body.  That is the
-// expected state of an interface release: the compiler has checked
-// every signature, every type and every effect row, and nothing else
-// has been checked because there is nothing else yet.
-//
-// EVERY VECTOR IS RFC 4648's.  § 10 is the specification's own test
-// suite — the eight `BASE64("f")` … `BASE64("foobar")` lines — and § 9
-// is the worked "Man" example the encoder table is derived from.  A
-// test that passes here is a document any conforming decoder reads.
+// Every vector is RFC 4648's own.  Section 10 is the specification's
+// test suite, the eight `BASE64("f")` to `BASE64("foobar")` lines.
+// Section 9 is the worked "Man" example the encoder table is derived
+// from.  A test that passes here is a document any conforming decoder
+// reads.
 
 use std.test
 use std.bytes
@@ -82,7 +77,7 @@ fn test_the_alphabet_enum_maps_onto_the_integer_the_device_half_stores()
 
 @test
 fn test_the_unpadded_form_is_the_padded_one_without_the_equals()
-    // JWT (RFC 7515 § 2) specifies exactly this: base64url with the
+    // JWT (RFC 7515 § 2) specifies this form: base64url with the
     // padding removed.
     test.assert_eq(base64.encode(bytes.from_str("f"), B64UrlSafe, B64Unpadded), "Zg")
     test.assert_eq(base64.encode(bytes.from_str("fo"), B64UrlSafe, B64Unpadded), "Zm8")

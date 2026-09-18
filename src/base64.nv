@@ -28,12 +28,19 @@
 // short-destination case, and it costs one extra pass over text that is
 // already in memory.
 //
-// The two modules share no `use` line: a type declared in one is
-// visible in the other by name, and an import nothing calls is an
-// import the file never uses.
+// THE `use base64_core` LINE IS LOAD-BEARING.  A TYPE declared in the
+// other module is visible here by name with no import — `B64Enc` below
+// is spelled bare — but a CALL is not: `base64_core.encoder` needs the
+// module in scope, and this package has two functions named `encoder`
+// with one argument each.  Without the import, a single-file build
+// resolves the qualified call to the one in THIS module and reports a
+// type error at a line that is correct.  The published 0.0.x interface
+// had no bodies and so no calls, and the missing line only showed once
+// there were.
 
 use std.bytes
 use std.str
+use base64_core
 
 // Which of RFC 4648's two tables a document uses.
 //

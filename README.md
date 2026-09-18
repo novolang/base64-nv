@@ -7,11 +7,13 @@ also defines a second alphabet for use in URLs and filenames. This
 package brings both alphabets to novo-lang, in a form that also builds
 for a microcontroller.
 
-**Status: NOT IMPLEMENTED — interface only.** Every function is declared
-with its full signature, but every body is a `todo()` that panics when
-called. The package is published so its design can be reviewed and
-depended on before it is implemented. Version 0.1.0 will be the first
-working release.
+**Status: implemented, and experimental.** Every function has a body,
+every published signature is the one version 0.0.2 declared, and the
+tests are green. The stability is experimental because the tests were
+written against the signatures before the bodies existed and no program
+outside this repository has used the package yet. Base32 and base16 are
+not here, and neither is MIME's line wrapping; see "What is not
+included".
 
 ## What base64 is
 
@@ -77,10 +79,7 @@ fn main() [io]
         Err(e) => println(e.message())
 ```
 
-Build and test with `novo pkg build` and `novo test`. Today `novo test`
-fails on purpose: every test reaches a `not implemented: base64.<fn>`
-panic. The tests are the specification the implementation will have to
-satisfy.
+Build and test with `novo pkg build` and `novo test`.
 
 ## What the package contains
 
@@ -155,17 +154,26 @@ with no heap allocator, and the compiler checks that claim on every
 build. Here the claim covers `base64_core` and nothing else. It takes
 and answers `Int` and `u8`, and it holds no buffer.
 
-`tests/embedded_probe.nv` is that claim as a program that either builds
-or does not. It builds today:
+`tests/embedded_probe.nv` is that claim as a program:
 
 ```bash
 novo build --target=nrf52-qemu tests/embedded_probe.nv
+qemu-system-arm -machine mps2-an386 -nographic -semihosting -kernel probe.elf
 ```
 
 The probe produces a Cortex-M4 executable that reads both tables, runs
-the size arithmetic, and drives the encoder and the decoder a byte at a
-time. It builds and it is not run: every function it calls is a `todo()`
-today.
+the size arithmetic, encodes "Man" a byte at a time and decodes `TWFu`
+back. It checks each answer against a literal and writes `ok` or `BAD`
+for each, so the program proves the numbers on the processor and not
+only on the build machine.
+
+**`base64_core` also puts nothing on the heap.** A program that encodes
+inside an interrupt handler, or on a board with no allocator at all,
+allocates nothing by calling it: the state is three integers, the
+characters come back in a fixed four-byte array, and the alphabets are
+arithmetic rather than a sixty-four-entry table. `tests/alloc_scan.sh`
+checks that by reading the compiled output for a call to the memory
+allocator, in all fourteen functions of the module.
 
 **A device cannot use the `base64` module.** That module speaks `Bytes`
 and `Str`, and the embedded runtime defines neither. One host-only
@@ -212,8 +220,14 @@ package is two modules.
 ## Tests
 
 ```bash
-novo test tests/base64_tests.nv        # 26 tests
+novo test tests                        # 40 tests in three files
 ```
+
+| File | What it covers |
+| --- | --- |
+| `base64_tests.nv` | 26 tests: the published surface, RFC 4648 section 10's vectors and every named refusal. |
+| `refusal_tests.nv` | 12 tests: the sentence each refusal prints, both tables at the two characters where they differ, and the sizes that answer a negative number. |
+| `differential_tests.nv` | 2 tests: this package against the standard library's base64 over 3,000 pseudo-random byte strings. |
 
 Every vector is RFC 4648's own. Section 10 is the specification's test
 suite, the eight lines from `BASE64("")` to `BASE64("foobar")`. Section 9
@@ -231,23 +245,32 @@ alphabet, that the size functions answer what a caller sizes a buffer
 with, that the writing calls refuse a short destination, and that the
 host enum maps onto the integer the device half stores.
 
-The tests compile today and fail at run, each on the `not implemented`
-panic that is its body. That is the expected state of an interface
-release. They turn green one at a time as bodies land.
+`differential_tests.nv` compares this package with `bytes.to_base64` and
+`bytes.from_base64` from the standard library, over 3,000 byte strings
+of lengths from 0 to 48. The generator is written in the test file, so a
+failure is reproducible from the file alone. The same file is also a
+program: `novo run --interp tests/differential_tests.nv` runs the same
+comparison on the reference interpreter, so both ways of running
+novo-lang code are checked.
+
+Every line of `src/` is executed by the suites. `bash tests/coverage.sh`
+measures it and prints the number.
 
 ## Implementation status
 
 | Item | Implemented |
 | --- | --- |
-| `base64_core.standard`, `.url_safe`, `.group_bytes`, `.group_chars` | no |
-| `base64_core.encoded_len`, `.decoded_len`, `.symbol`, `.value` | no |
-| `base64_core.encoder`, `.push`, `.finish` | no |
-| `base64_core.decoder`, `.feed`, `.close` | no |
-| `base64.alphabet_code`, `B64Error.message` | no |
-| `base64.encoded_len`, `.decoded_len` | no |
-| `base64.encode`, `.encode_into` | no |
-| `base64.decode`, `.decode_into` | no |
-| `base64.encoder`, `.decoder` | no |
+| `base64_core.standard`, `.url_safe`, `.group_bytes`, `.group_chars` | yes |
+| `base64_core.encoded_len`, `.decoded_len`, `.symbol`, `.value` | yes |
+| `base64_core.encoder`, `.push`, `.finish` | yes |
+| `base64_core.decoder`, `.feed`, `.close` | yes |
+| `base64.alphabet_code`, `B64Error.message` | yes |
+| `base64.encoded_len`, `.decoded_len` | yes |
+| `base64.encode`, `.encode_into` | yes |
+| `base64.decode`, `.decode_into` | yes |
+| `base64.encoder`, `.decoder` | yes |
+| Runs on a microcontroller with no heap allocator | yes, `base64_core` only |
+| Base32, base16, MIME line wrapping, a decoder that guesses the alphabet | no, and not planned |
 
 ## Licence
 

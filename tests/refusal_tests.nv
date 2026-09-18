@@ -46,6 +46,25 @@ fn test_more_than_two_padding_characters_is_refused_at_the_third()
                 B64BadPadding(at) => test.assert_eq(at, 4)
                 _                 => test.fail("expected B64BadPadding: ${e.message()}")
 
+@test
+fn test_a_document_that_is_nothing_but_padding_is_refused()
+    // Padding brings a group up to four characters, so four of it is a
+    // group with nothing in it.  The refusal points at the third `=`,
+    // which is the first one no quantum could have produced.
+    match base64.decode("====", B64Standard)
+        Ok(_)  => test.fail("padding is not a document")
+        Err(e) =>
+            match e
+                B64BadPadding(at) => test.assert_eq(at, 2)
+                _                 => test.fail("expected B64BadPadding: ${e.message()}")
+    // The empty document, which IS one: zero characters are zero bytes.
+    match base64.decode("", B64Standard)
+        Ok(b)  => test.assert_eq(bytes.len(b), 0)
+        Err(e) => test.fail(e.message())
+    match base64.decoded_len("")
+        Ok(n)  => test.assert_eq(n, 0)
+        Err(e) => test.fail(e.message())
+
 // ── Into a caller's buffer, at the edges ────────────────────────────
 
 @test

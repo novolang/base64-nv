@@ -135,11 +135,12 @@ fn padded(pad: B64Padding) -> Bool
 // Only at the end: this is what tells a padded document from an
 // unpadded one, and `=` anywhere else is `check`'s to refuse.
 fn trailing_pads(s: Str) -> Int
-    var n = str.len(s)
+    let n = str.len(s)
     var pads = 0
-    while n > 0 and str.byte_at_or(s, n - 1, 0) == 61
+    for i in 0..n
+        if str.byte_at_or(s, n - 1 - i, 0) != 61
+            return pads
         pads = pads + 1
-        n = n - 1
     pads
 
 // The length of the document's body — its characters before the

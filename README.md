@@ -220,13 +220,13 @@ package is two modules.
 ## Tests
 
 ```bash
-novo test tests                        # 40 tests in three files
+novo test tests                        # 41 tests in three files
 ```
 
 | File | What it covers |
 | --- | --- |
 | `base64_tests.nv` | 26 tests: the published surface, RFC 4648 section 10's vectors and every named refusal. |
-| `refusal_tests.nv` | 12 tests: the sentence each refusal prints, both tables at the two characters where they differ, and the sizes that answer a negative number. |
+| `refusal_tests.nv` | 13 tests: the sentence each refusal prints, both tables at the two characters where they differ, and the sizes that answer a negative number. |
 | `differential_tests.nv` | 2 tests: this package against the standard library's base64 over 3,000 pseudo-random byte strings. |
 
 Every vector is RFC 4648's own. Section 10 is the specification's test

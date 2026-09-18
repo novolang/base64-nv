@@ -34,6 +34,12 @@ interface compiles unchanged and now does something.
   the longest run RFC 4648 § 3.2 can produce.  The interface named the
   refusal; this release fixes which offset it carries.
 
+**The package is usable at the real-time tier**, which the interface
+was not: the one unbounded `while` in it — the loop that counts the
+trailing `=` — is a bounded `for` over the text's own length, and every
+other loop already was.  `novo pkg publish` reports the tiers as
+`rt, system, wasm, app`.
+
 **The device claim now runs.**  `tests/embedded_probe.nv` still builds
 a Cortex-M4 ELF for `--target=nrf52-qemu`, and the same ELF boots under
 `qemu-system-arm -machine mps2-an386` and checks four things against

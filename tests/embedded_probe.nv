@@ -1,5 +1,6 @@
 // tests/embedded_probe.nv — the package's device claim, as a program
-// that either builds for a Cortex-M or does not.
+// that either builds for a Cortex-M or does not, and that now also
+// CHECKS ITS ANSWERS there.
 //
 // The shard audit's `core-embedded` row copies this and the modules its
 // `use` lines reach into a package of its own and runs
@@ -13,13 +14,23 @@
 // building, the package would have nothing left to offer that
 // `std.codec` does not.
 //
-// It BUILDS; it does not run.  Every function it calls is a `todo()`
-// today, so a device that executed this would panic on the first line
-// of `main`.  What is being checked is the tier: `--target=nrf52-qemu`
+// IT BUILDS AND IT RUNS.  At the 0.0.x interface every function it
+// called was a `todo()` and the tier was all that could be checked;
+// with the bodies in, the same ELF boots under
+//
+//   qemu-system-arm -machine mps2-an386 -nographic -semihosting -kernel probe.elf
+//
+// and writes `ok` for each of the four things it checks.  What the
+// BUILD still checks on its own is the tier: `--target=nrf52-qemu`
 // stamps `@tier(embedded)` on every function it compiles, so the
-// checker walks the module and refuses a `Str` concatenation, a `Bytes`
-// call or an unbounded `while` wherever the implementation later puts
-// one.
+// checker refuses a `Str` concatenation, a `Bytes` call or an unbounded
+// `while` wherever one is introduced.
+//
+// WHY THE ANSWERS ARE PRINTED AS `ok` AND NOT AS THE CHARACTERS.
+// Turning a byte into text is `str.from_byte`, which is host-only, so a
+// device that printed the encoding would not be a device program.  The
+// comparisons are done against integer literals and the verdict is a
+// literal too.
 //
 // `base64` IS NOT USED HERE, and that is the split rather than a
 // convenience: that module speaks `Bytes` and `Str`, the embedded
@@ -44,20 +55,42 @@ struct ProbeGroup
 fn probe_group() -> ProbeGroup
     ProbeGroup { b: [77 as u8, 97 as u8, 110 as u8] }
 
+// `TWFu`, the four characters "Man" encodes to, as the ASCII bytes a
+// device compares against.
+@value
+struct ProbeText
+    c: [u8; 4]
+
+fn probe_text() -> ProbeText
+    ProbeText { c: [84 as u8, 87 as u8, 70 as u8, 117 as u8] }
+
+fn say(label: Str, good: Bool) [hw]
+    hal.uart.write(label)
+    if good
+        hal.uart.write(": ok\n")
+    else
+        hal.uart.write(": BAD\n")
+
 fn main() [hw]
     // The constants and the arithmetic, so a device that sizes a
     // transmit buffer compiles the same numbers the host does.
     let std_alpha = base64_core.standard()
     let url_alpha = base64_core.url_safe()
-    let per_group = base64_core.group_bytes()
-    let chars = base64_core.group_chars()
-    let room = base64_core.encoded_len(64, true)
-    let back = base64_core.decoded_len(88, true)
+    var good = base64_core.group_bytes() == 3 and base64_core.group_chars() == 4
+    good = good and base64_core.encoded_len(64, true) == 88
+    good = good and base64_core.decoded_len(88, true) == 66
+    good = good and base64_core.encoded_len(64, false) == 86
+    say("sizes", good)
 
     // The two tables, read directly — what a decoder's inner loop does
-    // before it shifts anything.
-    let sym = base64_core.symbol(std_alpha, 0)
-    let val = base64_core.value(url_alpha, 45)
+    // before it shifts anything, and the two characters where RFC 4648
+    // § 4 and § 5 part company.
+    good = base64_core.symbol(std_alpha, 0) == 65
+    good = good and base64_core.symbol(std_alpha, 63) == 47
+    good = good and base64_core.symbol(url_alpha, 63) == 95
+    good = good and base64_core.value(url_alpha, 45) == 62
+    good = good and base64_core.value(std_alpha, 45) == 0 - 1
+    say("tables", good)
 
     // The encoder driven byte at a time, which is the shape a device
     // streaming a sensor batch out as text has: one byte in, zero or
@@ -68,35 +101,41 @@ fn main() [hw]
     // single-file build.  Inside a package built as one unit — which is
     // what every host suite does — none of these annotations is needed.
     let src = probe_group()
+    let want = probe_text()
+    var written = 0
+    good = true
     var e: B64Enc = base64_core.encoder(std_alpha)
     for i in 0..3
         let step: B64Emit = base64_core.push(e, src.b[i])
         e = step.enc
         for k in 0..step.len
-            // A real transport would put this character in a queue;
-            // here the read is what forces the array access to be
-            // compiled.
             let c: u8 = step.out[k]
-            hal.uart.write(".")
-
-    // And the close, which is where padding comes from.
+            if c != want.c[written]
+                good = false
+            written = written + 1
+    // And the close, which is where padding comes from.  A whole group
+    // leaves nothing to close, so this adds no characters at all.
     let last: B64Emit = base64_core.finish(e, true)
-    for k in 0..last.len
-        let c: u8 = last.out[k]
-        hal.uart.write("=")
+    good = good and written == 4 and last.len == 0
+    say("encode", good)
 
     // The decoder's mirror, so both directions are compiled for the
     // device rather than only the one a sender needs.
     var d: B64Dec = base64_core.decoder(std_alpha)
-    for i in 0..3
-        let got: B64Drain = base64_core.feed(d, 84 as u8)
+    var read = 0
+    good = true
+    for i in 0..4
+        let got: B64Drain = base64_core.feed(d, want.c[i])
         d = got.dec
+        if not got.ok
+            good = false
         for k in 0..got.len
             let b: u8 = got.out[k]
-            hal.uart.write("-")
-
+            if b != src.b[read]
+                good = false
+            read = read + 1
     let done: B64Drain = base64_core.close(d)
-    if done.ok
-        hal.uart.write("!")
+    good = good and read == 3 and done.ok and done.len == 0
+    say("decode", good)
 
     hal.uart.write("base64-nv: three bytes, four characters\n")

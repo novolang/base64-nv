@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# tests/alloc_scan.sh — the package's central claim, as a check that can
+# fail.
+#
+# `base64_core` is the half a device runs, and what makes it usable
+# there is not that it avoids `Bytes` — the type checker says that — but
+# that it puts nothing on the heap.  Nothing in the language enforces
+# that; the emitted LLVM is where it is true or false, so this reads it.
+#
+# Three runs, because a check that cannot fail is not a check:
+#
+#   1. THE CLAIM.  Every function in `base64_core` appears in the IR of
+#      `tests/alloc_probe.nv` at `--opt=0` and none of them calls the
+#      allocator, directly or through one of the runtime entry points
+#      that allocates on the caller's behalf.
+#   2. THE SCAN STILL SEES ONE.  A heap list literal is spliced into
+#      `symbol` on a copy of the tree, with that function's
+#      `@tier(embedded)` taken off so the tier checker is not what
+#      refuses it, and the scan has to name it.  Without this, a scan
+#      that quietly stopped matching would pass forever.
+#   3. THE TIER CHECK STILL RUNS.  The same splice with the
+#      `@tier(embedded)` left on has to be REFUSED at compile time.  A
+#      tier annotation that stopped being enforced looks exactly like
+#      one that passes.
+#
+# Run from anywhere:  bash tests/alloc_scan.sh
+set -uo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PKG="$(cd "$HERE/.." && pwd)"
+NOVO="${NOVO:-$HOME/.novo/bin/novo}"
+SCAN="$HERE/alloc_scan.py"
+
+PASS=0; FAIL=0
+pass() { echo "  ✓ $1"; PASS=$((PASS + 1)); }
+fail() { echo "  ✗ $1"; [ -n "${2:-}" ] && echo "$2" | sed 's/^/      /'; FAIL=$((FAIL + 1)); }
+
+echo ""
+echo "══════════════════════════════════════════"
+echo "  base64-nv — nothing in base64_core allocates"
+echo "══════════════════════════════════════════"
+
+[ -x "$NOVO" ] || { fail "novo present at $NOVO"; echo "pass=$PASS fail=$FAIL"; exit 1; }
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/base64-nv-alloc.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+# The splice: a heap list literal bound in `symbol`, and read, so it
+# cannot be folded away.  `--tier` says whether the function keeps its
+# `@tier(embedded)` line.
+splice() {  # splice <src/base64_core.nv> <keep-tier: yes|no>
+  python3 - "$1" "$2" <<'PY'
+import sys
+path, keep_tier = sys.argv[1], sys.argv[2]
+s = open(path).read()
+anchor = ("pub @tier(embedded)\n"
+          "fn symbol(alphabet: Int, v: Int) -> Int\n"
+          "    if v < 0\n"
+          "        return 0\n")
+if anchor not in s:
+    sys.exit("anchor not found — alloc_scan.sh's splice is measuring nothing")
+new = ("pub @tier(embedded)\nfn symbol(alphabet: Int, v: Int) -> Int\n"
+       "    let probe = [1, 2, 3]\n"
+       "    if v < 0 or probe[0] > 99\n"
+       "        return 0\n")
+s = s.replace(anchor, new)
+if keep_tier == "no":
+    # `symbol`'s callers are @tier(embedded) too, and a lower tier may
+    # not call a higher one, so the annotation comes off the WHOLE
+    # module.  What is left is a core with no tier claim at all, which
+    # is exactly the state in which the emitted IR is the only thing
+    # that can still catch the allocation.
+    s = s.replace("pub @tier(embedded)\nfn ", "pub fn ")
+open(path, 'w').write(s)
+PY
+}
+
+build_probe() {  # build_probe <tree>
+  ( cd "$1" && NOVO_LEAK_CHECK=0 timeout 900 "$NOVO" build --opt=0 \
+      -o "$1/probe.bin" tests/alloc_probe.nv ) >"$1/build.log" 2>&1
+}
+
+# ── 1. the claim ─────────────────────────────────────────────────────
+
+cp -r "$PKG" "$WORK/ok" 2>/dev/null
+rm -rf "$WORK/ok/_novo"
+if build_probe "$WORK/ok"; then
+  IR="$WORK/ok/_novo/alloc_probe.ll"
+  if [ -s "$IR" ]; then
+    report="$(python3 "$SCAN" "$IR")"
+    if [ "${report#OK}" != "$report" ]; then
+      pass "nothing in base64_core allocates — ${report#OK }"
+    else
+      fail "nothing in base64_core allocates" "${report#FAIL }"
+    fi
+  else
+    fail "nothing in base64_core allocates" "no _novo/alloc_probe.ll emitted"
+  fi
+else
+  fail "the allocation probe builds" "$(grep -E 'error' "$WORK/ok/build.log" | head -5)"
+fi
+
+# ── 2. the scan still sees an allocation ─────────────────────────────
+
+cp -r "$PKG" "$WORK/neg" 2>/dev/null
+rm -rf "$WORK/neg/_novo"
+if splice "$WORK/neg/src/base64_core.nv" no >"$WORK/splice.log" 2>&1 \
+   && build_probe "$WORK/neg"; then
+  neg="$(python3 "$SCAN" "$WORK/neg/_novo/alloc_probe.ll")"
+  if [ "${neg#FAIL}" != "$neg" ] && printf '%s' "$neg" | grep -q 'symbol'; then
+    pass "the scan still SEES an allocation spliced into the core"
+  else
+    fail "the scan still sees an allocation spliced into the core" \
+         "expected a finding naming symbol; got: $neg"
+  fi
+else
+  fail "the negative control builds" \
+       "$(cat "$WORK/splice.log"; grep -E 'error' "$WORK/neg/build.log" | head -5)"
+fi
+
+# ── 3. the tier check still runs ─────────────────────────────────────
+
+cp -r "$PKG" "$WORK/tier" 2>/dev/null
+rm -rf "$WORK/tier/_novo"
+splice "$WORK/tier/src/base64_core.nv" yes >"$WORK/tsplice.log" 2>&1
+if build_probe "$WORK/tier"; then
+  fail "@tier(embedded) still refuses a heap list literal" \
+       "the build SUCCEEDED with a list literal in an embedded-tier function"
+else
+  pass "@tier(embedded) still refuses a heap list literal in the core"
+fi
+
+echo ""
+echo "pass=$PASS fail=$FAIL"
+[ "$FAIL" -eq 0 ]

@@ -1,0 +1,110 @@
+// tests/alloc_probe.nv — a program that reaches every function in
+// `base64_core`, so the emitted LLVM can be read for a call to the
+// allocator.
+//
+// This is not a test.  `tests/alloc_scan.sh` builds it with `--opt=0`
+// and reads the IR; `--opt=0` is what makes the check mean anything,
+// because at the default optimisation level the whole probe inlines
+// into `novo_main`, there is no function left to attribute an
+// allocation to, and an assertion that no core function allocates
+// would pass because no core function is there.
+//
+// EVERY FUNCTION IS CALLED, because a function the probe never reaches
+// is a function the linker drops and the scan never sees.  The
+// `base64` module is NOT here: it allocates, that is what it is for —
+// a `Str` out of `encode`, a `Bytes` out of `decode` — and reading its
+// IR would only prove it.
+//
+// The numbers are printed rather than checked; the vector suites own
+// correctness.  This one is here to be read as text.
+
+use std.str
+use base64_core
+
+// Three bytes held the way firmware holds them: a fixed inline array
+// in a `@value` struct, which is the one spelling that is not a list.
+@value
+struct ProbeGroup
+    b: [u8; 3]
+
+fn probe_group() -> ProbeGroup
+    ProbeGroup { b: [77 as u8, 97 as u8, 110 as u8] }
+
+// The constants and the size arithmetic, in both directions and in
+// both forms.
+fn sizes() -> Int
+    var score = base64_core.group_bytes() + base64_core.group_chars()
+    score = score + base64_core.standard() + base64_core.url_safe()
+    score = score + base64_core.encoded_len(7, true) + base64_core.encoded_len(7, false)
+    score = score + base64_core.encoded_len(0, true)
+    score = score + base64_core.decoded_len(12, true) + base64_core.decoded_len(10, false)
+    score = score + base64_core.decoded_len(9, false) + base64_core.decoded_len(0 - 1, true)
+    score
+
+// Both tables, read in both directions, at every range boundary and
+// both of the two characters where the alphabets differ.
+fn tables() -> Int
+    let std_alpha = base64_core.standard()
+    let url_alpha = base64_core.url_safe()
+    var score = 0
+    for v in 0..64
+        score = score + base64_core.symbol(std_alpha, v) + base64_core.symbol(url_alpha, v)
+    score = score + base64_core.symbol(std_alpha, 64) + base64_core.symbol(std_alpha, 0 - 1)
+    for ch in 0..128
+        score = score + base64_core.value(std_alpha, ch) + base64_core.value(url_alpha, ch)
+    score
+
+// The encoder driven a byte at a time, then closed in both forms — the
+// shape a device streaming a sensor batch out as text has.
+fn encode_path(padded: Bool) -> Int
+    let src = probe_group()
+    var score = 0
+    var e = base64_core.encoder(base64_core.standard())
+    for i in 0..3
+        let step = base64_core.push(e, src.b[i])
+        e = step.enc
+        score = score + step.len
+        for k in 0..step.len
+            score = score + step.out[k] as Int
+    // A group left one byte short, so `finish` has something to close.
+    let partial = base64_core.push(base64_core.encoder(base64_core.url_safe()), 250 as u8)
+    let one = base64_core.finish(partial.enc, padded)
+    score = score + one.len
+    let two = base64_core.push(partial.enc, 251 as u8)
+    let both = base64_core.finish(two.enc, padded)
+    score = score + both.len
+    score = score + base64_core.finish(e, padded).len
+    score
+
+// The decoder's mirror: a whole group, both short tails, a character
+// outside the alphabet, and a feed after the latch.
+fn decode_path() -> Int
+    let std_alpha = base64_core.standard()
+    var score = 0
+    var d = base64_core.decoder(std_alpha)
+    for i in 0..4
+        let got = base64_core.feed(d, 84 as u8)
+        d = got.dec
+        score = score + got.len
+        for k in 0..got.len
+            score = score + got.out[k] as Int
+    score = score + base64_core.close(d).len
+    // Two characters, which is one byte, and three, which is two.
+    let a = base64_core.feed(base64_core.decoder(std_alpha), 90 as u8)
+    let b = base64_core.feed(a.dec, 103 as u8)
+    score = score + base64_core.close(b.dec).len
+    let c = base64_core.feed(b.dec, 56 as u8)
+    score = score + base64_core.close(c.dec).len
+    // One character, which is not an encoding of anything, and a tail
+    // whose unused bits are set.
+    score = score + base64_core.close(a.dec).len
+    let tail = base64_core.feed(base64_core.decoder(std_alpha), 104 as u8)
+    score = score + base64_core.close(tail.dec).len
+    // A character outside the alphabet, and the latch after it.
+    let bad = base64_core.feed(base64_core.decoder(std_alpha), 45 as u8)
+    let after = base64_core.feed(bad.dec, 65 as u8)
+    score = score + after.len + base64_core.close(after.dec).len
+    score
+
+fn main() [io]
+    println(str.from_int(sizes() + tables() + encode_path(true) + encode_path(false) + decode_path()))

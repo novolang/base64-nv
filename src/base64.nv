@@ -295,7 +295,7 @@ pub fn encode(src: Bytes, alphabet: B64Alphabet, pad: B64Padding) -> Str
 // allocates the destination once and reuses it, and the arithmetic that
 // sizes it is `encoded_len`.
 pub fn encode_into(src: Bytes, alphabet: B64Alphabet, pad: B64Padding,
-                   mut dst: Cursor) -> Result<Int, B64Error>
+                   var dst: Cursor) -> Result<Int, B64Error>
     let n = bytes.len(src)
     let want = base64_core.encoded_len(n, padded(pad))
     let have = dst.remaining()
@@ -360,7 +360,7 @@ pub fn decode(s: Str, alphabet: B64Alphabet) -> Result<Bytes, B64Error>
 // says, and writes nothing in that case.  A document refused for any
 // other reason writes nothing either, because `fault` reads the whole
 // of it before the first byte lands.
-pub fn decode_into(s: Str, alphabet: B64Alphabet, mut dst: Cursor) -> Result<Int, B64Error>
+pub fn decode_into(s: Str, alphabet: B64Alphabet, var dst: Cursor) -> Result<Int, B64Error>
     let alpha = alphabet_code(alphabet)
     match fault(s, alpha)
         Some(e) => Err(e)
